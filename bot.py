@@ -22,7 +22,7 @@ BOT_TOKEN = "7333444202:AAEogLn_hq-DKQOs6qYoq40dHbLiBHGuzoo"
 VIDEO_FILE_ID = "AAMCBQADGQECkBz3aUjXEzUStPLev12oYAwVjrCfTUwAAsUaAAJrmklWBsTui-qiTgEBAAdtAAM2BA"
 
 # Your Telegram user ID (for admin commands)
-ADMIN_USER_ID = pasindu2367
+ADMIN_USER_ID = 1574602076
 # =============================
 
 # Initialize bot
@@ -195,4 +195,5 @@ if __name__ == '__main__':
     
     # Start polling
     bot.infinity_polling()
+
 
