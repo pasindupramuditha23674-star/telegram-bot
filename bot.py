@@ -7,8 +7,13 @@ import telebot
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Bot token from environment variable
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = "https://deliverybot-ph3t.onrender.com/webhook"
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable not set!")
+
+# Webhook URL (update with your Render app URL)
+WEBHOOK_URL = "https://YOUR-APP-NAME.onrender.com/webhook"
 
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
@@ -95,7 +100,7 @@ def fallback(message):
         "4️⃣ Video will arrive here automatically"
     )
 
-# ------------------ WEBHOOK ------------------
+# ------------------ FLASK WEBHOOK ------------------
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -106,11 +111,12 @@ def webhook():
         logger.exception("Webhook error")
         return "ERROR", 400
 
-@app.route('/set_webhook')
+@app.route('/set_webhook', methods=['GET'])
 def set_webhook():
     try:
         bot.remove_webhook()
         bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"Webhook set: {WEBHOOK_URL}")
         return jsonify({"success": True, "webhook": WEBHOOK_URL})
     except Exception as e:
         logger.exception("Set webhook error")
@@ -120,6 +126,7 @@ def set_webhook():
 def index():
     return "✅ Bot is running and ready to deliver videos!"
 
-# ------------------ START APP ------------------
+# ------------------ RUN FLASK ------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    PORT = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=PORT)
