@@ -21,7 +21,7 @@ bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 # ------------------ VIDEO DATABASE ------------------
 video_database = {
     'video1': {
-        'file_id': 'AAMCBQADGQECZcQxaP8AAU6V0AzYZAYNX5wfAAHDVby1yAACtBwAAgrq-VeSvlKXxZojhgEAB20AAzYE',
+        'file_id': 'AAMCBQADGQECkBz3aUjXEzUStPLev12oYAwVjrCfTUwAAsUaAAJrmklWBsTui-qiTgEBAAdtAAM2BA',
         'title': 'Amazing Video 1',
         'description': 'This is the first amazing video'
     },
@@ -130,3 +130,4 @@ def index():
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=PORT)
+
