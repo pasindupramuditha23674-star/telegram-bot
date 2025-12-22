@@ -16,7 +16,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # ✅ FIXED: Added title and verified file_id format
 video_database = {
     'video1': {
-        'file_id': '"AAMCBQADGQECZcQxaP8AAU6V0AzYZAYNX5wfAAHDVby1yAACtBwAAgrq-VeSvlKXxZojhgEAB20AAzYE',
+        'file_id': 'AAMCBQADGQECkBz3aUjXEzUStPLev12oYAwVjrCfTUwAAsUaAAJrmklWBsTui-qiTgEBAAdtAAM2BA',
         'title': 'Amazing Video 1',  # ✅ ADDED TITLE
         'description': 'This is the first amazing video'
     },
@@ -94,7 +94,7 @@ def webhook():
 @app.route('/set_webhook', methods=['GET'])
 def set_webhook():
     """Set webhook for Telegram bot"""
-    webhook_url = "https://deliverybot-ph3t.onrender.com/webhook"
+    webhook_url = "https://server528-bot.onrender.com/webhook"
     try:
         bot.remove_webhook()
         success = bot.set_webhook(url=webhook_url)
@@ -110,7 +110,3 @@ def index():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)  # ✅ FIXED: Added missing ) and 0
-
-
-
-
