@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7333444202:AAEogLn_hq-DKQOs6qYoq40dHbLiBHGuzoo"
 
 # Your video file ID (get this by sending video to bot)
-VIDEO_FILE_ID = "YOUR_VIDEO_FILE_ID_HERE"
+VIDEO_FILE_ID = "AAMCBQADGQECkBz3aUjXEzUStPLev12oYAwVjrCfTUwAAsUaAAJrmklWBsTui-qiTgEBAAdtAAM2BA"
 
 # Your Telegram user ID (for admin commands)
-ADMIN_USER_ID = YOUR_USER_ID_HERE
+ADMIN_USER_ID = pasindu2367
 # =============================
 
 # Initialize bot
@@ -195,3 +195,4 @@ if __name__ == '__main__':
     
     # Start polling
     bot.infinity_polling()
+
