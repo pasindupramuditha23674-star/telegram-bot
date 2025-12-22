@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-# bot.py - Telegram Bot for sending videos
+# bot.py - Telegram Bot for sending videos using pyTelegramBotAPI
 
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-    CallbackQueryHandler
-)
+import telebot
+from telebot import types
+from flask import Flask, request
 
 # Enable logging
 logging.basicConfig(
@@ -24,48 +18,64 @@ logger = logging.getLogger(__name__)
 # Your bot token from BotFather
 BOT_TOKEN = "7333444202:AAEogLn_hq-DKQOs6qYoq40dHbLiBHGuzoo"
 
-# Your video file ID (get this by sending /getfileid to your bot after uploading)
+# Your video file ID (get this by sending video to bot)
 VIDEO_FILE_ID = "YOUR_VIDEO_FILE_ID_HERE"
 
 # Your Telegram user ID (for admin commands)
 ADMIN_USER_ID = YOUR_USER_ID_HERE
 # =============================
 
-# Store user states (optional for tracking)
+# Initialize bot
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# Initialize Flask app for webhook (optional)
+app = Flask(__name__)
+
+# Store user states
 user_requests = {}
 
-# Start command
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a message when the command /start is issued."""
-    user = update.effective_user
-    keyboard = [
-        [InlineKeyboardButton("🎬 Get Video", callback_data='get_video')],
-        [InlineKeyboardButton("📢 Join Channel", url="https://t.me/storagechannel01")],
-        [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+# Start command handler
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    """Send welcome message when /start is issued."""
+    user = message.from_user
     
-    await update.message.reply_html(
-        f"👋 Hello {user.mention_html()}!\n\n"
+    # Create keyboard
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.row(
+        types.InlineKeyboardButton("🎬 Get Video", callback_data='get_video')
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("📢 Join Channel", url="https://t.me/YOUR_CHANNEL")
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("ℹ️ Help", callback_data='help')
+    )
+    
+    # Send welcome message
+    bot.reply_to(
+        message,
+        f"👋 Hello {user.first_name}!\n\n"
         "Welcome to the Video Sender Bot!\n\n"
         "Click the button below to receive your video:",
-        reply_markup=reply_markup
+        reply_markup=keyboard
     )
     
     # Log the user
     user_requests[user.id] = user_requests.get(user.id, 0) + 1
     logger.info(f"User {user.id} started the bot")
 
-# Handle button callbacks
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Callback query handler
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
     """Handle button callbacks."""
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'get_video':
-        await send_video(update, context)
-    elif query.data == 'help':
-        await query.edit_message_text(
+    if call.data == 'get_video':
+        send_video_callback(call)
+    elif call.data == 'help':
+        bot.answer_callback_query(call.id)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
             text="🤖 **Bot Help**\n\n"
                  "1. Click 'Get Video' to receive your video\n"
                  "2. Make sure you've clicked the link from our channel\n"
@@ -74,82 +84,102 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
 
-# Send video function
-async def send_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send video to user."""
+# Send video function (for callback)
+def send_video_callback(call):
+    """Send video to user from callback."""
     try:
-        # Check if it's callback query or message
-        if update.callback_query:
-            user = update.callback_query.from_user
-            message = update.callback_query.message
-        else:
-            user = update.effective_user
-            message = update.message
-        
-        # Send "sending" status
-        if update.callback_query:
-            await update.callback_query.edit_message_text("📤 Sending video...")
-        else:
-            await message.reply_text("📤 Sending video...")
+        # Edit message to show sending status
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="📤 Sending video..."
+        )
         
         # Send the video
-        await context.bot.send_video(
-            chat_id=user.id,
-            video=VIDEO_FILE_ID,
+        bot.send_video(
+            call.from_user.id,
+            VIDEO_FILE_ID,
             caption="🎬 Here's your video!\n\n"
                    "Enjoy! Don't forget to join our channel for more content!",
             parse_mode='Markdown'
         )
         
         # Update status
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                "✅ Video sent successfully! Check above. 👆"
-            )
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="✅ Video sent successfully! Check above. 👆"
+        )
         
-        logger.info(f"Video sent to user {user.id}")
+        logger.info(f"Video sent to user {call.from_user.id}")
         
     except Exception as e:
         logger.error(f"Error sending video: {e}")
-        error_msg = "❌ Failed to send video. Please try again or contact admin."
-        if update.callback_query:
-            await update.callback_query.edit_message_text(error_msg)
-        else:
-            await update.effective_message.reply_text(error_msg)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="❌ Failed to send video. Please try again or contact admin."
+        )
+
+# Handle regular messages
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    """Handle regular text messages."""
+    text = message.text.lower()
+    
+    if any(word in text for word in ['video', 'get', 'send']):
+        # Create simple keyboard for video
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.row(
+            types.InlineKeyboardButton("🎬 Get Video", callback_data='get_video')
+        )
+        bot.reply_to(
+            message,
+            "Click the button below to get your video:",
+            reply_markup=keyboard
+        )
+    else:
+        bot.reply_to(
+            message,
+            "I don't understand. Try /start to begin."
+        )
 
 # Admin command to get file ID
-async def getfileid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@bot.message_handler(commands=['getfileid'])
+def get_file_id(message):
     """Get file ID of sent video (admin only)."""
-    user = update.effective_user
-    if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("⛔ Admin only command.")
+    if message.from_user.id != ADMIN_USER_ID:
+        bot.reply_to(message, "⛔ Admin only command.")
         return
     
-    if update.message.reply_to_message and update.message.reply_to_message.video:
-        video = update.message.reply_to_message.video
+    if message.reply_to_message and message.reply_to_message.video:
+        video = message.reply_to_message.video
         file_id = video.file_id
-        await update.message.reply_text(
+        bot.reply_to(
+            message,
             f"📹 Video File ID:\n`{file_id}`\n\n"
             "Copy this to your bot.py file",
             parse_mode='Markdown'
         )
     else:
-        await update.message.reply_text(
+        bot.reply_to(
+            message,
             "Reply to a video message with /getfileid to get its file ID."
         )
 
 # Stats command (admin)
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@bot.message_handler(commands=['stats'])
+def show_stats(message):
     """Show bot statistics (admin only)."""
-    user = update.effective_user
-    if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("⛔ Admin only command.")
+    if message.from_user.id != ADMIN_USER_ID:
+        bot.reply_to(message, "⛔ Admin only command.")
         return
     
     total_users = len(user_requests)
     total_requests = sum(user_requests.values())
     
-    await update.message.reply_text(
+    bot.reply_to(
+        message,
         f"📊 **Bot Statistics**\n\n"
         f"👥 Total Users: {total_users}\n"
         f"📨 Total Requests: {total_requests}\n"
@@ -157,104 +187,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# Broadcast command (admin)
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Broadcast message to all users (admin only)."""
-    user = update.effective_user
-    if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("⛔ Admin only command.")
-        return
-    
-    if not context.args:
-        await update.message.reply_text("Usage: /broadcast Your message here")
-        return
-    
-    message = ' '.join(context.args)
-    sent = 0
-    failed = 0
-    
-    for user_id in list(user_requests.keys()):
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"📢 **Broadcast**\n\n{message}",
-                parse_mode='Markdown'
-            )
-            sent += 1
-        except:
-            failed += 1
-    
-    await update.message.reply_text(
-        f"📢 Broadcast completed!\n"
-        f"✅ Sent: {sent}\n"
-        f"❌ Failed: {failed}"
-    )
-
-# Help command
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a help message."""
-    await update.message.reply_text(
-        "🤖 **How to use this bot:**\n\n"
-        "1. Click 'Get Video' button\n"
-        "2. Wait for the video to be sent\n"
-        "3. Join our channel for more content\n\n"
-        "👨‍💻 Admin commands:\n"
-        "/stats - View bot statistics\n"
-        "/broadcast - Send message to all users\n"
-        "/getfileid - Get video file ID\n\n"
-        "Need help? Contact @your_username",
-        parse_mode='Markdown'
-    )
-
-# Handle regular messages
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle regular text messages."""
-    text = update.message.text.lower()
-    
-    if any(word in text for word in ['video', 'get', 'send']):
-        await send_video(update, context)
-    else:
-        await update.message.reply_text(
-            "Click the button below to get your video:",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🎬 Get Video", callback_data='get_video')
-            ]])
-        )
-
-# Error handler
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Log errors."""
-    logger.error(f"Update {update} caused error {context.error}")
-
-# Main function
-def main():
-    """Start the bot."""
-    # Create Application
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Add command handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(CommandHandler("broadcast", broadcast))
-    application.add_handler(CommandHandler("getfileid", getfileid))
-    
-    # Add callback query handler
-    application.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Add message handler
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Add error handler
-    application.add_error_handler(error_handler)
-    
-    # Start the bot
+# Main execution
+if __name__ == '__main__':
     print("🤖 Bot is starting...")
     print(f"📹 Video File ID: {VIDEO_FILE_ID}")
     print("✅ Bot is running. Press Ctrl+C to stop.")
     
-    # Run bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == '__main__':
-    main()
+    # Start polling
+    bot.infinity_polling()
