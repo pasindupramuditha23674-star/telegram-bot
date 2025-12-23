@@ -18,7 +18,13 @@ bot = telebot.TeleBot(BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
 # Start with empty database - add videos using admin bot
-video_database = {}
+video_database = {
+    'video1': {
+        'file_id': 'BAACAgUAAxkBAAMMaUofuEXqlqBeXWkEclxnVMnY8IMAApMfAAIbCkhWIRJ1BTeTZa42BA',  # ← Get from admin bot
+        'title': 'Video 1',
+        'description': 'Enjoy this video!'
+    }
+}
 
 # ==================== MAIN BOT ====================
 @bot.message_handler(commands=['start'])
@@ -186,14 +192,14 @@ def admin_webhook():
 
 @app.route('/set_webhook', methods=['GET'])
 def set_webhook():
-    webhook_url = "https://telegram-bot-7-dqqa.onrender.com"
+    webhook_url = "https://telegram-bot-7-dqqa.onrender.com/webhook"
     bot.remove_webhook()
     success = bot.set_webhook(url=webhook_url)
     return jsonify({"success": bool(success), "url": webhook_url})
 
 @app.route('/set_admin_webhook', methods=['GET'])
 def set_admin_webhook():
-    webhook_url = "https://telegram-bot-7-dqqa.onrender.com"
+    webhook_url = "https://telegram-bot-7-dqqa.onrender.com/admin_webhook"
     admin_bot.remove_webhook()
     success = admin_bot.set_webhook(url=webhook_url)
     return jsonify({"success": bool(success), "url": webhook_url})
@@ -214,3 +220,4 @@ def home():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
