@@ -164,7 +164,7 @@ def list_videos_command(message):
         num = vid_id.replace('video', '')
         response += f"• **Video {num}:** `{vid_id}`\n"
         response += f"  File ID: `{data['file_id'][:30]}...`\n"
-        response += f"  Website link: `https://YOURWEBSITE.com?video={num}`\n\n"
+        response += f"  Website link: `https://pasindupramuditha23674-star.github.io/video-site?video={num}`\n\n"
     
     response += f"**Total:** {len(video_database)} videos"
     admin_bot.reply_to(message, response, parse_mode='Markdown')
@@ -186,14 +186,14 @@ def admin_webhook():
 
 @app.route('/set_webhook', methods=['GET'])
 def set_webhook():
-    webhook_url = "https://TEMPORARY.onrender.com/webhook"
+    webhook_url = "https://telegram-bot-7-dqqa.onrender.com"
     bot.remove_webhook()
     success = bot.set_webhook(url=webhook_url)
     return jsonify({"success": bool(success), "url": webhook_url})
 
 @app.route('/set_admin_webhook', methods=['GET'])
 def set_admin_webhook():
-    webhook_url = "https://TEMPORARY.onrender.com/admin_webhook"
+    webhook_url = "https://telegram-bot-7-dqqa.onrender.com"
     admin_bot.remove_webhook()
     success = admin_bot.set_webhook(url=webhook_url)
     return jsonify({"success": bool(success), "url": webhook_url})
