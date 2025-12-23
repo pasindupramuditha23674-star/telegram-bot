@@ -23,6 +23,11 @@ video_database = {
         'file_id': 'BAACAgUAAxkBAAEC-DVpSV4-9MJUUM9K4PMX3GnEa_XHugACkx8AAhsKSFbxcawF4hIbRDYE',  # ← Get from admin bot
         'title': 'Video 1',
         'description': 'Enjoy this video!'
+    },
+    'video2': {
+        'file_id': 'BAACAgUAAxkBAAEC-JZpSj7hnbLtxISynqEZcbJHdIv13wACthwAAs3CUVbfKSm2EcblizYE',
+        'title': 'video 2',
+        'description': 'carry mahansi yko meka hadala'
     }
 }
 
@@ -220,6 +225,7 @@ def home():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
 
 
 
