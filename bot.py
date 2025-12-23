@@ -20,7 +20,7 @@ admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 # Start with empty database - add videos using admin bot
 video_database = {
     'video1': {
-        'file_id': 'BAACAgUAAxkBAAMMaUofuEXqlqBeXWkEclxnVMnY8IMAApMfAAIbCkhWIRJ1BTeTZa42BA',  # ← Get from admin bot
+        'file_id': 'BAACAgUAAxkBAAEC-DVpSV4-9MJUUM9K4PMX3GnEa_XHugACkx8AAhsKSFbxcawF4hIbRDYE',  # ← Get from admin bot
         'title': 'Video 1',
         'description': 'Enjoy this video!'
     }
@@ -220,4 +220,5 @@ def home():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
 
