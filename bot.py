@@ -1,7 +1,9 @@
 import os
 import json
 import logging
-from datetime import datetime
+import threading
+import time
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 import telebot
 
@@ -21,8 +23,10 @@ admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
 # Database file for persistence
 DB_FILE = 'video_database.json'
+# Track sent videos for auto-deletion
+SENT_VIDEOS_FILE = 'sent_videos_tracker.json'
 
-# ===== DATABASE PERSISTENCE FUNCTIONS =====
+# ===== DATABASE FUNCTIONS =====
 def load_database():
     """Load database from JSON file"""
     global video_database
@@ -48,8 +52,80 @@ def save_database():
     except Exception as e:
         logger.error(f"❌ Error saving database: {e}")
 
-# Load database at startup
+# ===== SENT VIDEOS TRACKER =====
+def load_sent_videos():
+    """Load sent videos tracker"""
+    global sent_videos
+    try:
+        if os.path.exists(SENT_VIDEOS_FILE):
+            with open(SENT_VIDEOS_FILE, 'r') as f:
+                sent_videos = json.load(f)
+        else:
+            sent_videos = {}
+    except Exception as e:
+        logger.error(f"Error loading sent videos: {e}")
+        sent_videos = {}
+
+def save_sent_videos():
+    """Save sent videos tracker"""
+    try:
+        with open(SENT_VIDEOS_FILE, 'w') as f:
+            json.dump(sent_videos, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Error saving sent videos: {e}")
+
+def add_sent_video(user_id, message_id, video_id, sent_time):
+    """Add sent video to tracker"""
+    key = f"{user_id}_{message_id}"
+    sent_videos[key] = {
+        'user_id': user_id,
+        'message_id': message_id,
+        'video_id': video_id,
+        'sent_time': sent_time,
+        'delete_at': (datetime.now() + timedelta(hours=1)).isoformat()
+    }
+    save_sent_videos()
+
+# ===== AUTO DELETE THREAD =====
+def auto_delete_worker():
+    """Background thread to delete old videos"""
+    while True:
+        try:
+            current_time = datetime.now()
+            to_delete = []
+            
+            for key, data in sent_videos.items():
+                if 'delete_at' in data:
+                    delete_time = datetime.fromisoformat(data['delete_at'])
+                    if current_time >= delete_time:
+                        to_delete.append(key)
+            
+            for key in to_delete:
+                data = sent_videos[key]
+                try:
+                    bot.delete_message(data['user_id'], data['message_id'])
+                    logger.info(f"Auto-deleted video for user {data['user_id']}")
+                except Exception as e:
+                    logger.error(f"Failed to auto-delete: {e}")
+                
+                del sent_videos[key]
+            
+            if to_delete:
+                save_sent_videos()
+                
+            time.sleep(60)  # Check every minute
+            
+        except Exception as e:
+            logger.error(f"Error in auto_delete_worker: {e}")
+            time.sleep(60)
+
+# Start auto-delete thread
+auto_delete_thread = threading.Thread(target=auto_delete_worker, daemon=True)
+auto_delete_thread.start()
+
+# Load databases at startup
 load_database()
+load_sent_videos()
 
 # ==================== PERMANENT FILE ID SYSTEM ====================
 @bot.message_handler(content_types=['video'])
@@ -59,12 +135,10 @@ def handle_video_upload(message):
         bot.reply_to(message, "⛔ This feature is for admin only.")
         return
     
-    # Get file information
     file_id = message.video.file_id
     file_size = message.video.file_size or 0
     duration = message.video.duration or 0
     
-    # Send information to user (NO MARKDOWN to avoid parsing errors)
     response = (
         f"✅ PERMANENT FILE ID READY!\n\n"
         f"File ID:\n{file_id}\n\n"
@@ -73,18 +147,18 @@ def handle_video_upload(message):
         f"• Size: {file_size:,} bytes\n\n"
         f"TO SAVE PERMANENTLY:\n"
         f"Reply to this video with:\n"
-        f"/savevideo 1  (for video1)\n"
-        f"/savevideo 2  (for video2)\n\n"
-        f"Or use:\n"
-        f"/addperm 1 {file_id}"
+        f"/savevideo 1  (for video1)\n\n"
+        f"SECURITY FEATURES:\n"
+        f"• Auto-delete after 1 hour\n"
+        f"• No saving to gallery\n"
+        f"• No forwarding allowed"
     )
     
     bot.reply_to(message, response)
-    logger.info(f"Video received from admin, size: {file_size}")
 
 @bot.message_handler(commands=['savevideo'])
 def save_video_command(message):
-    """Save video by replying to a video message - FIXED VERSION"""
+    """Save video by replying to a video message"""
     if message.from_user.id != YOUR_TELEGRAM_ID:
         bot.reply_to(message, "⛔ Admin only.")
         return
@@ -103,183 +177,23 @@ def save_video_command(message):
         video_id = f"video{video_num}"
         file_id = message.reply_to_message.video.file_id
         
-        # Test the file_id first (send to yourself)
-        try:
-            bot.send_video(
-                YOUR_TELEGRAM_ID,
-                file_id,
-                caption=f"TEST: Video {video_num}"
-            )
-            test_passed = True
-        except Exception as test_error:
-            test_passed = False
-            error_msg = str(test_error)
-        
         # Add to database
         video_database[video_id] = {
             'file_id': file_id,
             'title': f'Video {video_num}',
-            'description': 'Added via permanent method',
             'added_date': datetime.now().isoformat(),
             'permanent': True
         }
         
-        # Save to persistent storage
         save_database()
         
-        # Send response (NO MARKDOWN to avoid parsing errors)
-        if test_passed:
-            response = (
-                f"✅ PERMANENT VIDEO SAVED!\n\n"
-                f"Video ID: {video_id}\n"
-                f"Status: ✅ Working perfectly!\n\n"
-                f"USE IT NOW:\n"
-                f"• In bot: /start {video_id}\n"
-                f"• Website: https://pasindupramuditha23674-star.github.io/video-site?video={video_num}\n\n"
-                f"✅ This file_id should not expire!"
-            )
-        else:
-            response = (
-                f"⚠ VIDEO SAVED BUT TEST FAILED\n\n"
-                f"Video ID: {video_id}\n"
-                f"Error: {error_msg}\n\n"
-                f"The file_id may be invalid. Try sending the video again."
-            )
-        
-        bot.reply_to(message, response)
-        logger.info(f"Saved {video_id} with permanent file_id")
+        bot.reply_to(message, f"✅ Video {video_num} saved!\nSecurity features enabled:\n• Auto-delete: 1 hour\n• No saving/forwarding")
         
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
         logger.error(f"Error in save_video_command: {e}")
 
-@bot.message_handler(commands=['addperm'])
-def add_permanent_video(message):
-    """Add permanent video using file_id directly"""
-    if message.from_user.id != YOUR_TELEGRAM_ID:
-        return
-    
-    try:
-        parts = message.text.split(maxsplit=2)
-        if len(parts) != 3:
-            bot.reply_to(message,
-                "Usage: /addperm [video_number] [file_id]\n\n"
-                "Example: /addperm 1 BAACAgUAAxkBAAEC-DVpSV4...\n\n"
-                "Get file_id by:\n"
-                "1. Send video to this bot\n"
-                "2. Copy file_id from response\n"
-                "3. Use this command"
-            )
-            return
-        
-        video_num = parts[1]
-        file_id = parts[2]
-        video_id = f"video{video_num}"
-        
-        # Test the file_id
-        try:
-            bot.send_video(YOUR_TELEGRAM_ID, file_id, caption="Testing...")
-            test_passed = True
-        except Exception as test_error:
-            test_passed = False
-            error_msg = str(test_error)
-        
-        # Add to database
-        video_database[video_id] = {
-            'file_id': file_id,
-            'title': f'Video {video_num}',
-            'description': 'Added via permanent file_id',
-            'added_date': datetime.now().isoformat(),
-            'permanent': True
-        }
-        
-        save_database()
-        
-        if test_passed:
-            bot.reply_to(message, f"✅ Added {video_id} - Test successful!")
-        else:
-            bot.reply_to(message, f"⚠ Added {video_id} but test failed: {error_msg}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
-
-@bot.message_handler(commands=['testvideo'])
-def test_video_command(message):
-    """Test if a video file_id still works"""
-    try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            bot.reply_to(message, "Usage: /testvideo [video_number]\nExample: /testvideo 1")
-            return
-        
-        video_num = parts[1]
-        video_id = f"video{video_num}"
-        
-        if video_id not in video_database:
-            bot.reply_to(message, f"❌ {video_id} not found in database")
-            return
-        
-        file_id = video_database[video_id]['file_id']
-        is_permanent = video_database[video_id].get('permanent', False)
-        
-        try:
-            bot.send_video(
-                YOUR_TELEGRAM_ID,
-                file_id,
-                caption=f"Test: {video_id}"
-            )
-            
-            if is_permanent:
-                status = "✅ PERMANENT - Should not expire"
-            else:
-                status = "⚠ TEMPORARY - May expire soon"
-                
-            bot.reply_to(message,
-                f"Test Results for {video_id}:\n\n"
-                f"{status}\n"
-                f"Added: {video_database[video_id].get('added_date', 'Unknown')}"
-            )
-            
-        except Exception as e:
-            bot.reply_to(message,
-                f"❌ FILE ID EXPIRED\n\n"
-                f"Video: {video_id}\n"
-                f"Error: {str(e)}\n\n"
-                f"SOLUTION:\n"
-                f"1. Send video again to bot\n"
-                f"2. Use /savevideo {video_num} to get new permanent ID"
-            )
-            
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
-
-@bot.message_handler(commands=['listvideos'])
-def list_all_videos(message):
-    """List all videos in database"""
-    if message.from_user.id != YOUR_TELEGRAM_ID:
-        bot.reply_to(message, "⛔ Admin only.")
-        return
-    
-    if not video_database:
-        bot.reply_to(message, "📭 No videos in database")
-        return
-    
-    response = "📹 ALL VIDEOS IN DATABASE:\n\n"
-    for vid_id, data in video_database.items():
-        num = vid_id.replace('video', '')
-        if data.get('permanent', False):
-            status = "✅ PERMANENT"
-        else:
-            status = "⚠ TEMPORARY"
-        response += f"• Video {num} ({status})\n"
-        response += f"  Title: {data['title']}\n"
-        response += f"  Added: {data.get('added_date', 'Unknown')}\n"
-        response += f"  Website: https://pasindupramuditha23674-star.github.io/video-site?video={num}\n\n"
-    
-    response += f"Total: {len(video_database)} videos"
-    bot.reply_to(message, response)
-
-# ==================== MAIN BOT (EXISTING FUNCTIONS) ====================
+# ==================== VIDEO DELIVERY WITH SECURITY ====================
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     """Handle /start command with video parameters"""
@@ -297,46 +211,48 @@ def handle_start(message):
         bot.reply_to(message, "❌ Error. Please try again.")
 
 def send_video_to_user(message, video_id):
-    """Send specific video to user"""
+    """Send video with security features"""
     try:
         video_data = video_database[video_id]
         
-        caption = f"🎬 {video_data['title']}\n\n{video_data['description']}"
-        if video_data.get('permanent', False):
-            caption += "\n\n✅ Permanent video - Enjoy! 😊"
-        else:
-            caption += "\n\n⚠ Temporary video - Enjoy! 😊"
-        
-        bot.send_video(
-            message.chat.id,
-            video_data['file_id'],
-            caption=caption
+        # Send video with protected content settings
+        sent_msg = bot.send_video(
+            chat_id=message.chat.id,
+            video=video_data['file_id'],
+            caption="",  # Empty caption
+            protect_content=True,  # Prevents saving and forwarding
+            has_spoiler=False,
+            parse_mode=None
         )
-        logger.info(f"Video {video_id} sent to {message.from_user.id}")
+        
+        # Add to auto-delete tracker
+        add_sent_video(
+            user_id=message.chat.id,
+            message_id=sent_msg.message_id,
+            video_id=video_id,
+            sent_time=datetime.now().isoformat()
+        )
+        
+        logger.info(f"Protected video {video_id} sent to {message.from_user.id}")
+        
     except Exception as e:
         logger.error(f"Error sending video: {e}")
-        bot.reply_to(message, "❌ Failed to send video. The file may have expired.")
+        bot.reply_to(message, "❌ Failed to send video.")
 
 def show_video_menu(message):
     """Show available videos"""
     if video_database:
-        keyboard = telebot.types.InlineKeyboardMarkup()
-        for vid_id in video_database.keys():
+        keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+        for vid_id in sorted(video_database.keys()):
             num = vid_id.replace('video', '')
             keyboard.add(telebot.types.InlineKeyboardButton(
-                f"🎬 Video {num}", 
+                f"Video {num}", 
                 callback_data=f"send_{vid_id}"
             ))
-        
-        if message.from_user.id == YOUR_TELEGRAM_ID:
-            keyboard.add(telebot.types.InlineKeyboardButton(
-                "🔧 Admin Panel", 
-                callback_data="admin_panel"
-            ))
             
-        bot.reply_to(message, "📹 Select a video:", reply_markup=keyboard)
+        bot.reply_to(message, "Select a video:", reply_markup=keyboard)
     else:
-        bot.reply_to(message, "📭 No videos available yet. Check back soon!")
+        bot.reply_to(message, "No videos available yet.")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
@@ -346,26 +262,126 @@ def handle_callback(call):
         if video_id in video_database:
             try:
                 video_data = video_database[video_id]
-                bot.send_video(
-                    call.from_user.id,
-                    video_data['file_id'],
-                    caption=f"🎬 {video_data['title']}"
+                
+                # Send protected video
+                sent_msg = bot.send_video(
+                    chat_id=call.from_user.id,
+                    video=video_data['file_id'],
+                    caption="",  # Empty caption
+                    protect_content=True,
+                    has_spoiler=False,
+                    parse_mode=None
                 )
-                bot.answer_callback_query(call.id, "✅ Video sent!")
-            except:
+                
+                # Add to auto-delete tracker
+                add_sent_video(
+                    user_id=call.from_user.id,
+                    message_id=sent_msg.message_id,
+                    video_id=video_id,
+                    sent_time=datetime.now().isoformat()
+                )
+                
+                bot.answer_callback_query(call.id, "✅ Video sent! (Auto-deletes in 1 hour)")
+                
+            except Exception as e:
+                logger.error(f"Error sending video via callback: {e}")
                 bot.answer_callback_query(call.id, "❌ Failed to send video")
+
+# ==================== ADMIN COMMANDS ====================
+@bot.message_handler(commands=['testvideo'])
+def test_video_command(message):
+    """Test if a video file_id still works"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
     
-    elif call.data == 'admin_panel' and call.from_user.id == YOUR_TELEGRAM_ID:
-        bot.answer_callback_query(call.id, "Opening admin panel...")
-        bot.send_message(
-            call.from_user.id,
-            "🔧 ADMIN PANEL\n\n"
-            "Commands:\n"
-            "/listvideos - Show all videos\n"
-            "/testvideo [num] - Test video\n"
-            "/savevideo [num] - Save video (reply to video)\n"
-            "/addperm [num] [file_id] - Add permanent video"
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "Usage: /testvideo [video_number]")
+            return
+        
+        video_num = parts[1]
+        video_id = f"video{video_num}"
+        
+        if video_id not in video_database:
+            bot.reply_to(message, f"❌ {video_id} not found")
+            return
+        
+        file_id = video_database[video_id]['file_id']
+        
+        # Test with protected content
+        sent_msg = bot.send_video(
+            chat_id=YOUR_TELEGRAM_ID,
+            video=file_id,
+            caption="Test video",
+            protect_content=True
         )
+        
+        # Add to auto-delete for admin too
+        add_sent_video(
+            user_id=YOUR_TELEGRAM_ID,
+            message_id=sent_msg.message_id,
+            video_id=video_id,
+            sent_time=datetime.now().isoformat()
+        )
+        
+        bot.reply_to(message, f"✅ Test successful! Video will auto-delete in 1 hour")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['listvideos'])
+def list_all_videos(message):
+    """List all videos in database"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        bot.reply_to(message, "⛔ Admin only.")
+        return
+    
+    if not video_database:
+        bot.reply_to(message, "No videos in database")
+        return
+    
+    response = "📹 ALL VIDEOS:\n\n"
+    for vid_id in sorted(video_database.keys()):
+        num = vid_id.replace('video', '')
+        data = video_database[vid_id]
+        if data.get('permanent', False):
+            status = "✅ PERMANENT"
+        else:
+            status = "⚠ TEMPORARY"
+        response += f"• Video {num} ({status})\n"
+        response += f"  Added: {data.get('added_date', 'Unknown')}\n"
+        response += f"  URL: https://pasindupramuditha23674-star.github.io/video-site?video={num}\n\n"
+    
+    response += f"Total: {len(video_database)} videos"
+    bot.reply_to(message, response)
+
+@bot.message_handler(commands=['clearvideos'])
+def clear_old_sent_videos(message):
+    """Manually clear old sent videos"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        current_time = datetime.now()
+        deleted_count = 0
+        
+        for key, data in list(sent_videos.items()):
+            if 'delete_at' in data:
+                delete_time = datetime.fromisoformat(data['delete_at'])
+                if current_time >= delete_time:
+                    try:
+                        bot.delete_message(data['user_id'], data['message_id'])
+                        deleted_count += 1
+                    except:
+                        pass
+                    del sent_videos[key]
+        
+        save_sent_videos()
+        bot.reply_to(message, f"✅ Cleared {deleted_count} old videos")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
 
 # ==================== ADMIN BOT ====================
 @admin_bot.message_handler(commands=['start'])
@@ -373,93 +389,32 @@ def admin_start(message):
     """Admin bot help"""
     admin_bot.reply_to(message,
         "🤖 ADMIN BOT\n\n"
-        "For PERMANENT file IDs:\n"
-        "1. Send videos to main bot directly\n"
+        "For videos with security features:\n"
+        "1. Send videos to MAIN bot directly\n"
         "2. Use /savevideo command\n\n"
-        "Old commands (may give temporary IDs):\n"
-        "/addvideo [number] - Add video\n"
-        "/listvideos - Show videos"
+        "Features enabled:\n"
+        "• Auto-delete after 1 hour\n"
+        "• No saving to gallery\n"
+        "• No forwarding allowed"
     )
 
-@admin_bot.message_handler(content_types=['video'])
-def handle_video(message):
-    """Get File ID from video"""
+@admin_bot.message_handler(commands=['stats'])
+def stats_command(message):
+    """Show bot statistics"""
     if message.from_user.id != YOUR_TELEGRAM_ID:
-        admin_bot.reply_to(message, "⛔ Admin only.")
         return
     
-    file_id = message.video.file_id
-    
-    admin_bot.reply_to(message,
-        f"File ID (may be temporary):\n{file_id}\n\n"
-        "For permanent IDs, send to main bot instead.\n"
-        "To add anyway (reply to video):\n"
-        "/addvideo 1"
+    response = (
+        f"📊 BOT STATISTICS\n\n"
+        f"• Videos in database: {len(video_database)}\n"
+        f"• Videos pending deletion: {len(sent_videos)}\n"
+        f"• Permanent videos: {sum(1 for v in video_database.values() if v.get('permanent', False))}\n\n"
+        f"Security features:\n"
+        f"✅ Auto-delete enabled\n"
+        f"✅ Protect content enabled\n"
+        f"✅ No forwarding allowed"
     )
-
-@admin_bot.message_handler(commands=['addvideo'])
-def add_video_command(message):
-    """Add video to database (OLD METHOD)"""
-    if message.from_user.id != YOUR_TELEGRAM_ID:
-        admin_bot.reply_to(message, "⛔ Admin only.")
-        return
     
-    if message.reply_to_message and message.reply_to_message.video:
-        try:
-            parts = message.text.split()
-            if len(parts) != 2:
-                admin_bot.reply_to(message, "Usage: /addvideo [number]\nExample: /addvideo 1")
-                return
-            
-            video_num = parts[1]
-            video_id = f"video{video_num}"
-            file_id = message.reply_to_message.video.file_id
-            
-            video_database[video_id] = {
-                'file_id': file_id,
-                'title': f'Video {video_num}',
-                'description': 'Watch and enjoy!',
-                'added_date': datetime.now().isoformat(),
-                'permanent': False
-            }
-            
-            save_database()
-            
-            admin_bot.reply_to(message,
-                f"✅ Added {video_id} (Temporary)\n"
-                f"⚠ May expire soon\n"
-                f"For permanent: Send to main bot & use /savevideo"
-            )
-            logger.info(f"Added {video_id} to database (temporary)")
-            
-        except Exception as e:
-            admin_bot.reply_to(message, f"❌ Error: {e}")
-    else:
-        admin_bot.reply_to(message, "❌ Reply to a video with /addvideo [number]")
-
-@admin_bot.message_handler(commands=['listvideos'])
-def list_videos_command(message):
-    """List all videos in database"""
-    if message.from_user.id != YOUR_TELEGRAM_ID:
-        admin_bot.reply_to(message, "⛔ Admin only.")
-        return
-    
-    if not video_database:
-        admin_bot.reply_to(message, "📭 No videos in database")
-        return
-    
-    response = "📹 VIDEO DATABASE:\n\n"
-    for vid_id, data in video_database.items():
-        num = vid_id.replace('video', '')
-        if data.get('permanent', False):
-            status = "✅ PERMANENT"
-        else:
-            status = "⚠ TEMPORARY"
-        response += f"• Video {num} ({status})\n"
-        response += f"  Added: {data.get('added_date', 'Unknown')}\n"
-        response += f"  Website: ?video={num}\n\n"
-    
-    response += f"Total: {len(video_database)} videos"
     admin_bot.reply_to(message, response)
 
 # ==================== WEBHOOK ROUTES ====================
@@ -497,26 +452,30 @@ def setup_webhooks():
     set_admin_webhook()
     return jsonify({
         "message": "Webhooks configured!",
-        "main_bot": "Ready at /webhook",
-        "admin_bot": "Ready at /admin_webhook",
+        "security_features": {
+            "auto_delete": "1 hour",
+            "protect_content": True,
+            "no_saving": True,
+            "no_forwarding": True
+        },
         "database": f"Loaded {len(video_database)} videos"
     })
 
-@app.route('/database_status', methods=['GET'])
-def database_status():
-    """Check database status"""
+@app.route('/stats', methods=['GET'])
+def web_stats():
+    """Web statistics endpoint"""
     return jsonify({
         "video_count": len(video_database),
-        "videos": list(video_database.keys()),
-        "permanent_videos": [vid for vid, data in video_database.items() if data.get('permanent', False)]
+        "pending_deletions": len(sent_videos),
+        "security_enabled": True,
+        "auto_delete_hours": 1
     })
 
 @app.route('/')
 def home():
-    return "✅ Video Delivery Bot is running! Visit /setup to configure webhooks."
+    return "✅ Secure Video Delivery Bot is running! Visit /setup to configure."
 
 if __name__ == '__main__':
-    # Log startup info
-    logger.info(f"Bot started with {len(video_database)} videos in database")
-    
+    logger.info(f"Secure Bot started with {len(video_database)} videos")
+    logger.info("Security features: Auto-delete 1h, Protect content enabled")
     app.run(host='0.0.0.0', port=5000)
