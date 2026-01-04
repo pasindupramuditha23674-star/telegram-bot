@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
+CHANNEL_ID = "@YourChannelUsername"  # ← ADD THIS: Your channel username (e.g., @MyVideoChannel)
 # ===============================
 
 app = Flask(__name__)
@@ -119,6 +120,35 @@ def auto_delete_worker():
             logger.error(f"Error in auto_delete_worker: {e}")
             time.sleep(60)
 
+# ===== CHANNEL POSTING FUNCTIONS =====
+def post_to_channel(video_num):
+    """Post to Telegram channel with Watch Now button"""
+    try:
+        website_url = f"https://pasindupramuditha23674-star.github.io/video-site?video={video_num}"
+        
+        # Create inline keyboard with Watch Now button
+        keyboard = telebot.types.InlineKeyboardMarkup()
+        keyboard.add(
+            telebot.types.InlineKeyboardButton(
+                "🎬 Watch Now",
+                url=website_url
+            )
+        )
+        
+        # Send message to channel
+        post_msg = bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=f"🎥 Video {video_num} Now Available!\n\nClick the button below to watch 👇",
+            reply_markup=keyboard
+        )
+        
+        logger.info(f"Posted video {video_num} to channel {CHANNEL_ID}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to post to channel: {e}")
+        return False
+
 # Start auto-delete thread
 auto_delete_thread = threading.Thread(target=auto_delete_worker, daemon=True)
 auto_delete_thread.start()
@@ -187,7 +217,27 @@ def save_video_command(message):
         
         save_database()
         
-        bot.reply_to(message, f"✅ Video {video_num} saved!\nSecurity features enabled:\n• Auto-delete: 1 hour\n• No saving/forwarding")
+        # Post to channel
+        channel_posted = post_to_channel(video_num)
+        
+        # Response
+        response = (
+            f"✅ Video {video_num} saved!\n\n"
+            f"Security features enabled:\n"
+            f"• Auto-delete after 1 hour\n"
+            f"• No saving/forwarding allowed\n\n"
+            f"Website link:\n"
+            f"https://pasindupramuditha23674-star.github.io/video-site?video={video_num}\n\n"
+        )
+        
+        if channel_posted:
+            response += f"✅ Posted to channel: {CHANNEL_ID}"
+        else:
+            response += f"⚠ Could not post to channel (check CHANNEL_ID)"
+        
+        response += f"\n\nTest with:\n/start {video_id}"
+        
+        bot.reply_to(message, response)
         
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
@@ -383,6 +433,61 @@ def clear_old_sent_videos(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
+# ===== NEW CHANNEL COMMANDS =====
+@bot.message_handler(commands=['posttochannel'])
+def manual_post_to_channel(message):
+    """Manually post existing video to channel"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "Usage: /posttochannel [video_number]\nExample: /posttochannel 1")
+            return
+        
+        video_num = parts[1]
+        video_id = f"video{video_num}"
+        
+        if video_id not in video_database:
+            bot.reply_to(message, f"❌ Video {video_num} not found")
+            return
+        
+        # Post to channel
+        if post_to_channel(video_num):
+            bot.reply_to(message, f"✅ Video {video_num} posted to channel!")
+        else:
+            bot.reply_to(message, f"❌ Failed to post to channel. Check CHANNEL_ID.")
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['setchannel'])
+def set_channel_command(message):
+    """Set channel ID dynamically"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        parts = message.text.split(maxsplit=1)
+        if len(parts) != 2:
+            bot.reply_to(message, "Usage: /setchannel @YourChannelUsername\nOr: /setchannel -1234567890")
+            return
+        
+        global CHANNEL_ID
+        CHANNEL_ID = parts[1]
+        
+        # Test the channel
+        try:
+            test_msg = bot.send_message(CHANNEL_ID, "✅ Channel connected successfully!")
+            bot.delete_message(CHANNEL_ID, test_msg.message_id)
+            bot.reply_to(message, f"✅ Channel set to: {CHANNEL_ID}")
+        except:
+            bot.reply_to(message, f"⚠ Channel set to {CHANNEL_ID}\nBut could not send test message")
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
 # ==================== ADMIN BOT ====================
 @admin_bot.message_handler(commands=['start'])
 def admin_start(message):
@@ -395,7 +500,8 @@ def admin_start(message):
         "Features enabled:\n"
         "• Auto-delete after 1 hour\n"
         "• No saving to gallery\n"
-        "• No forwarding allowed"
+        "• No forwarding allowed\n\n"
+        f"Channel: {CHANNEL_ID}"
     )
 
 @admin_bot.message_handler(commands=['stats'])
@@ -408,7 +514,8 @@ def stats_command(message):
         f"📊 BOT STATISTICS\n\n"
         f"• Videos in database: {len(video_database)}\n"
         f"• Videos pending deletion: {len(sent_videos)}\n"
-        f"• Permanent videos: {sum(1 for v in video_database.values() if v.get('permanent', False))}\n\n"
+        f"• Permanent videos: {sum(1 for v in video_database.values() if v.get('permanent', False))}\n"
+        f"• Channel: {CHANNEL_ID}\n\n"
         f"Security features:\n"
         f"✅ Auto-delete enabled\n"
         f"✅ Protect content enabled\n"
@@ -458,6 +565,7 @@ def setup_webhooks():
             "no_saving": True,
             "no_forwarding": True
         },
+        "channel": CHANNEL_ID,
         "database": f"Loaded {len(video_database)} videos"
     })
 
@@ -468,7 +576,8 @@ def web_stats():
         "video_count": len(video_database),
         "pending_deletions": len(sent_videos),
         "security_enabled": True,
-        "auto_delete_hours": 1
+        "auto_delete_hours": 1,
+        "channel": CHANNEL_ID
     })
 
 @app.route('/')
@@ -477,5 +586,6 @@ def home():
 
 if __name__ == '__main__':
     logger.info(f"Secure Bot started with {len(video_database)} videos")
+    logger.info(f"Channel: {CHANNEL_ID}")
     logger.info("Security features: Auto-delete 1h, Protect content enabled")
     app.run(host='0.0.0.0', port=5000)
