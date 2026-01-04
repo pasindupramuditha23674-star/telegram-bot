@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
-CHANNEL_ID = "@storagechannel01"  # ← ADD THIS: Your channel username (e.g., @MyVideoChannel)
+CHANNEL_ID = "@storagechannel01"  # Your channel username with @
 # ===============================
 
 app = Flask(__name__)
@@ -121,8 +121,8 @@ def auto_delete_worker():
             time.sleep(60)
 
 # ===== CHANNEL POSTING FUNCTIONS =====
-def post_to_channel(video_num):
-    """Post to Telegram channel with Watch Now button"""
+def post_to_channel(video_num, video_message=None):
+    """Post to Telegram channel with video thumbnail and Watch Now button"""
     try:
         website_url = f"https://pasindupramuditha23674-star.github.io/video-site?video={video_num}"
         
@@ -135,14 +135,32 @@ def post_to_channel(video_num):
             )
         )
         
-        # Send message to channel
+        # Try to get and send thumbnail
+        if video_message and hasattr(video_message.video, 'thumb'):
+            try:
+                # Get thumbnail file ID
+                thumbnail_file_id = video_message.video.thumb.file_id
+                
+                # Send photo with thumbnail
+                post_msg = bot.send_photo(
+                    chat_id=CHANNEL_ID,
+                    photo=thumbnail_file_id,
+                    caption=f"🎥 Video {video_num}\n\nClick the button below to watch 👇",
+                    reply_markup=keyboard
+                )
+                logger.info(f"Posted video {video_num} to channel {CHANNEL_ID} with thumbnail")
+                return True
+            except Exception as thumb_error:
+                logger.error(f"Failed to send thumbnail: {thumb_error}")
+                # Fall back to text message
+        
+        # Fallback: Send text message if thumbnail fails
         post_msg = bot.send_message(
             chat_id=CHANNEL_ID,
             text=f"🎥 Video {video_num} Now Available!\n\nClick the button below to watch 👇",
             reply_markup=keyboard
         )
-        
-        logger.info(f"Posted video {video_num} to channel {CHANNEL_ID}")
+        logger.info(f"Posted video {video_num} to channel {CHANNEL_ID} (text only)")
         return True
         
     except Exception as e:
@@ -217,8 +235,8 @@ def save_video_command(message):
         
         save_database()
         
-        # Post to channel
-        channel_posted = post_to_channel(video_num)
+        # Post to channel WITH video message for thumbnail
+        channel_posted = post_to_channel(video_num, message.reply_to_message)
         
         # Response
         response = (
@@ -433,7 +451,7 @@ def clear_old_sent_videos(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
-# ===== NEW CHANNEL COMMANDS =====
+# ===== CHANNEL COMMANDS =====
 @bot.message_handler(commands=['posttochannel'])
 def manual_post_to_channel(message):
     """Manually post existing video to channel"""
@@ -453,11 +471,26 @@ def manual_post_to_channel(message):
             bot.reply_to(message, f"❌ Video {video_num} not found")
             return
         
-        # Post to channel
-        if post_to_channel(video_num):
+        # For manual posts without thumbnail
+        website_url = f"https://pasindupramuditha23674-star.github.io/video-site?video={video_num}"
+        
+        keyboard = telebot.types.InlineKeyboardMarkup()
+        keyboard.add(
+            telebot.types.InlineKeyboardButton(
+                "🎬 Watch Now",
+                url=website_url
+            )
+        )
+        
+        try:
+            post_msg = bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=f"🎥 Video {video_num} Now Available!\n\nClick the button below to watch 👇",
+                reply_markup=keyboard
+            )
             bot.reply_to(message, f"✅ Video {video_num} posted to channel!")
-        else:
-            bot.reply_to(message, f"❌ Failed to post to channel. Check CHANNEL_ID.")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Failed to post: {str(e)}")
             
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
