@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
-CHANNEL_ID = "@YourChannelUsername"  # ← ADD THIS: Your channel username (e.g., @MyVideoChannel)
+CHANNEL_ID = "@storagechannel01"  # ← ADD THIS: Your channel username (e.g., @MyVideoChannel)
 # ===============================
 
 app = Flask(__name__)
