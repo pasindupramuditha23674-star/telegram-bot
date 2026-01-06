@@ -18,6 +18,9 @@ YOUR_TELEGRAM_ID = 1574602076
 CHANNEL_ID = "@storagechannel01"
 # ===============================
 
+# Website configuration
+WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
+
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
@@ -164,7 +167,7 @@ def handle_photo_upload(message):
 def post_to_channel(video_num, video_message=None):
     """Post to channel with custom thumbnail"""
     try:
-        website_url = f"https://pasindupramuditha23674-star.github.io/video-site?video={video_num}"
+        website_url = f"{WEBSITE_BASE_URL}/?video={video_num}"
         
         keyboard = telebot.types.InlineKeyboardMarkup()
         keyboard.add(
@@ -290,7 +293,7 @@ def save_video_command(message):
             f"• Auto-delete after 1 hour\n"
             f"• No saving/forwarding\n\n"
             f"Website:\n"
-            f"https://pasindupramuditha23674-star.github.io/video-site?video={video_num}\n\n"
+            f"{WEBSITE_BASE_URL}/?video={video_num}\n\n"
         )
         
         if channel_posted:
@@ -400,7 +403,7 @@ def list_all_videos(message):
         has_thumb = "✅ Has thumbnail" if 'thumbnail_id' in data else "❌ No thumbnail"
         response += f"• Video {num}\n"
         response += f"  {has_thumb}\n"
-        response += f"  URL: https://pasindupramuditha23674-star.github.io/video-site?video={num}\n\n"
+        response += f"  URL: {WEBSITE_BASE_URL}/?video={num}\n\n"
     
     response += f"Total: {len(video_database)} videos"
     bot.reply_to(message, response)
@@ -423,15 +426,80 @@ def manual_post_to_channel(message):
             bot.reply_to(message, f"❌ Video {video_num} not found")
             return
         
-        if post_to_channel(video_num, None):
-            bot.reply_to(message, f"✅ Video {video_num} posted to channel!")
+        # Create post manually
+        website_url = f"{WEBSITE_BASE_URL}/?video={video_num}"
+        
+        keyboard = telebot.types.InlineKeyboardMarkup()
+        keyboard.add(
+            telebot.types.InlineKeyboardButton(
+                "🎬 Watch Now",
+                url=website_url
+            )
+        )
+        
+        video_id = f"video{video_num}"
+        
+        # Check for custom thumbnail
+        if video_id in video_database and 'thumbnail_id' in video_database[video_id]:
+            thumbnail_id = video_database[video_id]['thumbnail_id']
+            
+            post_msg = bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=thumbnail_id,
+                caption=f"🎥 **Video {video_num}**\n\nClick the button below to watch 👇",
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
         else:
-            bot.reply_to(message, f"❌ Failed to post to channel")
+            post_msg = bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=f"🎥 **Video {video_num} Available!**\n\nClick: {website_url}",
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+        
+        bot.reply_to(message, f"✅ Video {video_num} posted to channel!")
             
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
-# (Keep all the webhook routes and other functions as before)
+# ==================== ADMIN BOT ====================
+@admin_bot.message_handler(commands=['start'])
+def admin_start(message):
+    """Admin bot help"""
+    admin_bot.reply_to(message,
+        "🤖 ADMIN BOT\n\n"
+        "For videos with security features:\n"
+        "1. Send videos to MAIN bot directly\n"
+        "2. Use /savevideo command\n\n"
+        "Features enabled:\n"
+        "• Auto-delete after 1 hour\n"
+        "• No saving to gallery\n"
+        "• No forwarding allowed\n\n"
+        f"Channel: {CHANNEL_ID}\n"
+        f"Website: {WEBSITE_BASE_URL}"
+    )
+
+@admin_bot.message_handler(commands=['stats'])
+def stats_command(message):
+    """Show bot statistics"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    response = (
+        f"📊 BOT STATISTICS\n\n"
+        f"• Videos in database: {len(video_database)}\n"
+        f"• Videos pending deletion: {len(sent_videos)}\n"
+        f"• Permanent videos: {sum(1 for v in video_database.values() if v.get('permanent', False))}\n"
+        f"• Channel: {CHANNEL_ID}\n"
+        f"• Website: {WEBSITE_BASE_URL}\n\n"
+        f"Security features:\n"
+        f"✅ Auto-delete enabled\n"
+        f"✅ Protect content enabled\n"
+        f"✅ No forwarding allowed"
+    )
+    
+    admin_bot.reply_to(message, response)
 
 # ==================== WEBHOOK ROUTES ====================
 @app.route('/webhook', methods=['POST'])
@@ -468,15 +536,35 @@ def setup_webhooks():
     set_admin_webhook()
     return jsonify({
         "message": "Webhooks configured!",
+        "security_features": {
+            "auto_delete": "1 hour",
+            "protect_content": True,
+            "no_saving": True,
+            "no_forwarding": True
+        },
         "channel": CHANNEL_ID,
-        "videos": len(video_database)
+        "website": WEBSITE_BASE_URL,
+        "database": f"Loaded {len(video_database)} videos"
+    })
+
+@app.route('/stats', methods=['GET'])
+def web_stats():
+    """Web statistics endpoint"""
+    return jsonify({
+        "video_count": len(video_database),
+        "pending_deletions": len(sent_videos),
+        "security_enabled": True,
+        "auto_delete_hours": 1,
+        "channel": CHANNEL_ID,
+        "website": WEBSITE_BASE_URL
     })
 
 @app.route('/')
 def home():
-    return "✅ Video Bot with Thumbnail System is running!"
+    return f"✅ Secure Video Delivery Bot is running! Website: {WEBSITE_BASE_URL}"
 
 if __name__ == '__main__':
-    logger.info(f"Bot started with {len(video_database)} videos")
+    logger.info(f"Secure Bot started with {len(video_database)} videos")
     logger.info(f"Channel: {CHANNEL_ID}")
+    logger.info(f"Website: {WEBSITE_BASE_URL}")
     app.run(host='0.0.0.0', port=5000)
