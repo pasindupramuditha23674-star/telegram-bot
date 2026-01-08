@@ -35,9 +35,9 @@ admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 video_database = {}
 sent_videos = {}  # Global variable for tracking sent videos
 
-# ===== MONGODB CONNECTION =====
+# ===== MONGODB CONNECTION WITH SSL FIX =====
 def connect_to_mongodb():
-    """Connect to MongoDB Atlas"""
+    """Connect to MongoDB Atlas with SSL fix"""
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
         
@@ -49,16 +49,22 @@ def connect_to_mongodb():
             logger.warning("⚠️ PyMongo not installed")
             return None
         
-        # FIX: Add tlsAllowInvalidCertificates=True for SSL issues
+        logger.info(f"🔄 Attempting MongoDB connection...")
+        
+        # FIX 1: Added SSL/TLS parameters to fix connection issues
         client = MongoClient(
             mongodb_uri,
-            serverSelectionTimeoutMS=5000,
-            tlsAllowInvalidCertificates=True  # ← FIX FOR SSL ERROR
+            serverSelectionTimeoutMS=15000,  # Increased timeout
+            connectTimeoutMS=15000,
+            socketTimeoutMS=15000,
+            tls=True,                      # Enable TLS/SSL
+            tlsAllowInvalidCertificates=True,  # Allow self-signed certs
+            appname="video-bot"
         )
         
         # Test connection
+        logger.info("🔄 Testing MongoDB connection...")
         client.admin.command('ping')
-        logger.info("✅ Connected to MongoDB Atlas!")
         
         # Get database and collections
         db = client.video_bot_database
@@ -67,6 +73,11 @@ def connect_to_mongodb():
         
         # Create indexes
         videos_collection.create_index('video_id', unique=True)
+        sent_videos_collection.create_index('key', unique=True)
+        
+        logger.info("✅ Connected to MongoDB Atlas!")
+        logger.info(f"📊 Database: {db.name}")
+        logger.info(f"📁 Collections: videos, sent_videos")
         
         return {
             'client': client,
@@ -75,7 +86,31 @@ def connect_to_mongodb():
         }
         
     except Exception as e:
-        logger.error(f"❌ MongoDB connection failed: {e}")
+        logger.error(f"❌ MongoDB connection failed: {str(e)[:200]}")
+        
+        # Try alternative connection method if SRV fails
+        if "mongodb+srv://" in str(mongodb_uri):
+            try:
+                logger.info("🔄 Trying alternative connection without SRV...")
+                # Replace SRV with standard connection
+                alt_uri = str(mongodb_uri).replace("mongodb+srv://", "mongodb://")
+                alt_client = MongoClient(
+                    alt_uri,
+                    serverSelectionTimeoutMS=10000,
+                    tlsAllowInvalidCertificates=True
+                )
+                alt_client.admin.command('ping')
+                logger.info("✅ Alternative connection successful!")
+                
+                db = alt_client.video_bot_database
+                return {
+                    'client': alt_client,
+                    'videos': db.videos,
+                    'sent_videos': db.sent_videos
+                }
+            except Exception as alt_e:
+                logger.error(f"❌ Alternative also failed: {str(alt_e)[:200]}")
+        
         return None
 
 # Initialize MongoDB
@@ -119,22 +154,28 @@ def save_database():
     """Save database to MongoDB AND local file"""
     try:
         # Save to MongoDB if available
+        mongo_success = False
         if mongo_client and mongo_client['videos']:
-            for video_id, data in video_database.items():
-                # Ensure video_id is in the document
-                data_to_save = data.copy()
-                data_to_save['video_id'] = video_id
-                data_to_save['last_updated'] = datetime.now().isoformat()
-                
-                # Update or insert
-                mongo_client['videos'].update_one(
-                    {'video_id': video_id},
-                    {'$set': data_to_save},
-                    upsert=True
-                )
-            logger.info(f"💾 Saved to MongoDB: {len(video_database)} videos")
+            try:
+                for video_id, data in video_database.items():
+                    # Ensure video_id is in the document
+                    data_to_save = data.copy()
+                    data_to_save['video_id'] = video_id
+                    data_to_save['last_updated'] = datetime.now().isoformat()
+                    
+                    # Update or insert
+                    mongo_client['videos'].update_one(
+                        {'video_id': video_id},
+                        {'$set': data_to_save},
+                        upsert=True
+                    )
+                mongo_success = True
+                logger.info(f"💾 Saved to MongoDB: {len(video_database)} videos")
+            except Exception as mongo_error:
+                logger.error(f"⚠️ MongoDB save failed (using local): {mongo_error}")
+                mongo_success = False
         
-        # ALWAYS save to local file (backup)
+        # ALWAYS save to local file (backup) - THIS IS CRITICAL
         with open('video_database.json', 'w') as f:
             json.dump(video_database, f, indent=2, ensure_ascii=False)
         
@@ -142,7 +183,11 @@ def save_database():
         with open('video_database.backup.json', 'w') as f:
             json.dump(video_database, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"✅ Database saved with backups: {len(video_database)} videos")
+        status = f"✅ Database saved: {len(video_database)} videos"
+        if mongo_client:
+            status += f" (MongoDB: {'✅' if mongo_success else '❌'})"
+        
+        logger.info(status)
         return True
         
     except Exception as e:
@@ -260,7 +305,124 @@ auto_delete_thread.start()
 load_database()
 load_sent_videos()
 
-# ===== EMERGENCY BACKUP COMMAND =====
+# ===== DIAGNOSTIC COMMANDS =====
+@bot.message_handler(commands=['mongotest'])
+def test_mongodb(message):
+    """Test MongoDB connection"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        # Get connection string (hide password)
+        mongodb_uri = os.getenv('MONGODB_URI', 'Not set')
+        if mongodb_uri and '@' in mongodb_uri:
+            # Hide password
+            parts = mongodb_uri.split('@')
+            user_pass = parts[0]
+            if ':' in user_pass:
+                user = user_pass.split(':')[0]
+                mongodb_uri_display = f"{user}:***@{parts[1].split('/')[0]}"
+            else:
+                mongodb_uri_display = "***@***"
+        else:
+            mongodb_uri_display = mongodb_uri
+        
+        # Test connection
+        test_status = "Not tested"
+        if mongodb_uri and mongodb_uri != 'Not set':
+            try:
+                test_client = MongoClient(
+                    mongodb_uri,
+                    serverSelectionTimeoutMS=5000,
+                    tlsAllowInvalidCertificates=True
+                )
+                test_client.admin.command('ping')
+                test_status = "✅ CONNECTED"
+                test_client.close()
+            except Exception as e:
+                test_status = f"❌ FAILED: {str(e)[:150]}"
+        else:
+            test_status = "❌ URI NOT SET"
+        
+        response = (
+            f"🔧 MongoDB Diagnostic Test:\n\n"
+            f"URI: {mongodb_uri_display}\n"
+            f"Status: {test_status}\n"
+            f"Current client: {'✅ Ready' if mongo_client else '❌ Not ready'}\n"
+            f"Local videos: {len(video_database)}\n\n"
+            f"📝 Fix checklist:\n"
+            f"1. ✅ Add 0.0.0.0/0 to Network Access\n"
+            f"2. ✅ Check password in connection string\n"
+            f"3. ✅ Ensure database user has read/write permissions"
+        )
+        
+        bot.reply_to(message, response)
+        
+    except Exception as e:
+        bot.reply_to(message, f"Test error: {str(e)[:100]}")
+
+@bot.message_handler(commands=['simple'])
+def simple_status(message):
+    """Simple status check that always works"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        # Basic counts
+        total = len(video_database)
+        with_files = sum(1 for v in video_database.values() if v.get('file_id'))
+        pending = len(sent_videos)
+        
+        response = (
+            f"📊 Simple Status:\n"
+            f"Videos: {total}\n"
+            f"Ready: {with_files}\n"
+            f"Auto-delete queue: {pending}\n"
+            f"Bot: ✅ Working\n"
+            f"MongoDB: {'✅' if mongo_client else '❌'}"
+        )
+        
+        bot.reply_to(message, response)
+        
+    except Exception as e:
+        bot.reply_to(message, f"✅ Bot is running (status error: {str(e)[:50]})")
+
+@bot.message_handler(commands=['status'])
+def bot_status_command(message):
+    """Check bot and database status"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        # MongoDB status
+        mongo_status = "✅ Connected" if mongo_client else "❌ Not connected (using local files)"
+        
+        # Count videos
+        total_videos = len(video_database)
+        videos_with_file = sum(1 for v in video_database.values() if v.get('file_id'))
+        
+        response = (
+            f"🤖 BOT STATUS REPORT\n\n"
+            f"📊 Database Status:\n"
+            f"• MongoDB: {mongo_status}\n"
+            f"• Total videos: {total_videos}\n"
+            f"• Videos with file_id: {videos_with_file}\n"
+            f"• Pending deletions: {len(sent_videos)}\n\n"
+            
+            f"🔧 System Info:\n"
+            f"• Channel: {CHANNEL_ID}\n"
+            f"• Website: {WEBSITE_BASE_URL}\n"
+            f"• Admin ID: {YOUR_TELEGRAM_ID}\n\n"
+            
+            f"✅ Bot is working normally!\n"
+            f"Test MongoDB: /mongotest"
+        )
+        
+        bot.reply_to(message, response)
+        
+    except Exception as e:
+        bot.reply_to(message, f"✅ Bot is running (status details unavailable)")
+
 @bot.message_handler(commands=['emergencybackup'])
 def emergency_backup(message):
     """Create emergency backup you can download"""
@@ -552,73 +714,6 @@ def handle_callback(call):
             except Exception as e:
                 logger.error(f"Error sending video via callback: {e}")
                 bot.answer_callback_query(call.id, "❌ Failed to send video")
-
-# ==================== STATUS COMMANDS ====================
-@bot.message_handler(commands=['simple'])
-def simple_status(message):
-    """Simple status check that always works"""
-    if message.from_user.id != YOUR_TELEGRAM_ID:
-        return
-    
-    try:
-        # Basic counts
-        total = len(video_database)
-        with_files = sum(1 for v in video_database.values() if v.get('file_id'))
-        pending = len(sent_videos)
-        
-        response = (
-            f"📊 Simple Status:\n"
-            f"Videos: {total}\n"
-            f"Ready: {with_files}\n"
-            f"Auto-delete queue: {pending}\n"
-            f"Bot: ✅ Working\n"
-            f"MongoDB: {'✅' if mongo_client else '❌'}"
-        )
-        
-        bot.reply_to(message, response)
-        
-    except Exception as e:
-        bot.reply_to(message, f"✅ Bot is running (status error: {str(e)[:50]})")
-
-@bot.message_handler(commands=['status'])
-def bot_status_command(message):
-    """Check bot and database status"""
-    if message.from_user.id != YOUR_TELEGRAM_ID:
-        return
-    
-    try:
-        # MongoDB status
-        mongo_status = "✅ Connected" if mongo_client else "❌ Not connected (using local files)"
-        
-        # Count videos
-        total_videos = len(video_database)
-        videos_with_file = sum(1 for v in video_database.values() if v.get('file_id'))
-        
-        # FIXED: Simplified response to avoid Telegram API errors
-        response = (
-            f"🤖 BOT STATUS REPORT\n\n"
-            f"📊 Database Status:\n"
-            f"• MongoDB: {mongo_status}\n"
-            f"• Total videos: {total_videos}\n"
-            f"• Videos with file_id: {videos_with_file}\n"
-            f"• Pending deletions: {len(sent_videos)}\n\n"
-            
-            f"🔧 System Info:\n"
-            f"• Channel: {CHANNEL_ID}\n"
-            f"• Website: {WEBSITE_BASE_URL}\n"
-            f"• Admin ID: {YOUR_TELEGRAM_ID}\n\n"
-            
-            f"✅ Bot is working normally!\n"
-            f"Local backups are active.\n"
-            f"Use /emergencybackup for safety."
-        )
-        
-        # FIXED: Use simple text, no Markdown
-        bot.reply_to(message, response)
-        
-    except Exception as e:
-        # FIXED: Simpler error reply
-        bot.reply_to(message, f"✅ Bot is running (status details unavailable)")
 
 # ==================== WEBHOOK ROUTES ====================
 @app.route('/webhook', methods=['POST'])
