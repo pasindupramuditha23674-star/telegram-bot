@@ -51,7 +51,7 @@ def connect_to_mongodb():
         
         logger.info(f"🔄 Attempting MongoDB connection...")
         
-        # FIX 1: Added SSL/TLS parameters to fix connection issues
+        # FIX: Added SSL/TLS parameters to fix connection issues
         client = MongoClient(
             mongodb_uri,
             serverSelectionTimeoutMS=15000,  # Increased timeout
@@ -89,11 +89,11 @@ def connect_to_mongodb():
         logger.error(f"❌ MongoDB connection failed: {str(e)[:200]}")
         
         # Try alternative connection method if SRV fails
-        if "mongodb+srv://" in str(mongodb_uri):
+        if mongodb_uri and "mongodb+srv://" in mongodb_uri:
             try:
                 logger.info("🔄 Trying alternative connection without SRV...")
                 # Replace SRV with standard connection
-                alt_uri = str(mongodb_uri).replace("mongodb+srv://", "mongodb://")
+                alt_uri = mongodb_uri.replace("mongodb+srv://", "mongodb://")
                 alt_client = MongoClient(
                     alt_uri,
                     serverSelectionTimeoutMS=10000,
@@ -122,20 +122,24 @@ def load_database():
     global video_database
     
     try:
-        # Try MongoDB first
-        if mongo_client and mongo_client['videos']:
-            # Load from MongoDB
-            videos_cursor = mongo_client['videos'].find({})
-            video_database = {}
-            
-            for doc in videos_cursor:
-                video_id = doc['video_id']
-                # Remove MongoDB _id field
-                doc.pop('_id', None)
-                video_database[video_id] = doc
-            
-            logger.info(f"✅ Loaded {len(video_database)} videos from MongoDB")
-            return
+        # Try MongoDB first - FIX: Check if mongo_client exists and has 'videos' key
+        if mongo_client is not None and 'videos' in mongo_client:
+            try:
+                # Load from MongoDB
+                videos_cursor = mongo_client['videos'].find({})
+                video_database = {}
+                
+                for doc in videos_cursor:
+                    video_id = doc['video_id']
+                    # Remove MongoDB _id field
+                    doc.pop('_id', None)
+                    video_database[video_id] = doc
+                
+                logger.info(f"✅ Loaded {len(video_database)} videos from MongoDB")
+                return
+            except Exception as mongo_error:
+                logger.error(f"❌ MongoDB load failed, falling back to local: {mongo_error}")
+                # Fall through to local backup
         
         # Fallback: Try local file
         if os.path.exists('video_database.json'):
@@ -153,9 +157,9 @@ def load_database():
 def save_database():
     """Save database to MongoDB AND local file"""
     try:
-        # Save to MongoDB if available
+        # Save to MongoDB if available - FIX: Check mongo_client is not None
         mongo_success = False
-        if mongo_client and mongo_client['videos']:
+        if mongo_client is not None and 'videos' in mongo_client:
             try:
                 for video_id, data in video_database.items():
                     # Ensure video_id is in the document
@@ -184,7 +188,7 @@ def save_database():
             json.dump(video_database, f, indent=2, ensure_ascii=False)
         
         status = f"✅ Database saved: {len(video_database)} videos"
-        if mongo_client:
+        if mongo_client is not None:
             status += f" (MongoDB: {'✅' if mongo_success else '❌'})"
         
         logger.info(status)
@@ -196,48 +200,57 @@ def save_database():
 
 # ===== SENT VIDEOS TRACKER =====
 def load_sent_videos():
-    global sent_videos  # FIX: Added global declaration
+    global sent_videos
     try:
-        # Try MongoDB first
-        if mongo_client and mongo_client['sent_videos']:
-            # Load from MongoDB
-            cursor = mongo_client['sent_videos'].find({})
-            sent_videos = {}
-            for doc in cursor:
-                key = doc['key']
-                doc.pop('_id', None)
-                doc.pop('key', None)
-                sent_videos[key] = doc
-            logger.info(f"✅ Loaded {len(sent_videos)} sent videos from MongoDB")
-        else:
-            # Local file
-            if os.path.exists('sent_videos.json'):
-                with open('sent_videos.json', 'r') as f:
-                    sent_videos = json.load(f)
-                    logger.info(f"✅ Loaded {len(sent_videos)} sent videos from local file")
-            else:
+        # Try MongoDB first - FIX: Check mongo_client, not collection object
+        if mongo_client is not None and 'sent_videos' in mongo_client:
+            try:
+                # Load from MongoDB
+                cursor = mongo_client['sent_videos'].find({})
                 sent_videos = {}
-                logger.info("📂 Starting fresh sent videos tracker")
+                for doc in cursor:
+                    key = doc.get('key')
+                    if key:
+                        doc.pop('_id', None)
+                        doc.pop('key', None)
+                        sent_videos[key] = doc
+                logger.info(f"✅ Loaded {len(sent_videos)} sent videos from MongoDB")
+                return
+            except Exception as mongo_error:
+                logger.error(f"MongoDB sent_videos load failed: {mongo_error}")
+                # Fall through to local file
+        
+        # Local file
+        if os.path.exists('sent_videos.json'):
+            with open('sent_videos.json', 'r') as f:
+                sent_videos = json.load(f)
+                logger.info(f"✅ Loaded {len(sent_videos)} sent videos from local file")
+        else:
+            sent_videos = {}
+            logger.info("📂 Starting fresh sent videos tracker")
     except Exception as e:
         logger.error(f"Error loading sent videos: {e}")
         sent_videos = {}
 
 def save_sent_videos():
-    global sent_videos  # FIX: Added global declaration
+    global sent_videos
     try:
-        # Save to MongoDB if available
-        if mongo_client and mongo_client['sent_videos']:
-            # Clear old and save new
-            mongo_client['sent_videos'].delete_many({})
-            if sent_videos:
-                documents = []
-                for key, data in sent_videos.items():
-                    doc = data.copy()
-                    doc['key'] = key
-                    documents.append(doc)
-                mongo_client['sent_videos'].insert_many(documents)
+        # Save to MongoDB if available - FIX: Check mongo_client
+        if mongo_client is not None and 'sent_videos' in mongo_client:
+            try:
+                # Clear old and save new
+                mongo_client['sent_videos'].delete_many({})
+                if sent_videos:
+                    documents = []
+                    for key, data in sent_videos.items():
+                        doc = data.copy()
+                        doc['key'] = key
+                        documents.append(doc)
+                    mongo_client['sent_videos'].insert_many(documents)
+            except Exception as mongo_error:
+                logger.error(f"MongoDB sent_videos save failed: {mongo_error}")
         
-        # Local backup
+        # ALWAYS save local backup
         with open('sent_videos.json', 'w') as f:
             json.dump(sent_videos, f, indent=2, ensure_ascii=False)
             
@@ -245,7 +258,7 @@ def save_sent_videos():
         logger.error(f"Error saving sent videos: {e}")
 
 def add_sent_video(user_id, message_id, video_id, sent_time):
-    global sent_videos  # FIX: Added global declaration
+    global sent_videos
     key = f"{user_id}_{message_id}"
     sent_videos[key] = {
         'user_id': user_id,
@@ -259,7 +272,7 @@ def add_sent_video(user_id, message_id, video_id, sent_time):
 
 # ===== AUTO DELETE THREAD =====
 def auto_delete_worker():
-    global sent_videos  # FIX: This was missing - causing the error!
+    global sent_videos
     
     while True:
         try:
@@ -348,18 +361,100 @@ def test_mongodb(message):
             f"🔧 MongoDB Diagnostic Test:\n\n"
             f"URI: {mongodb_uri_display}\n"
             f"Status: {test_status}\n"
-            f"Current client: {'✅ Ready' if mongo_client else '❌ Not ready'}\n"
+            f"Current client: {'✅ Ready' if mongo_client is not None else '❌ Not ready'}\n"
+            f"MongoDB collections: {'✅ Loaded' if mongo_client and 'videos' in mongo_client else '❌ Not loaded'}\n"
             f"Local videos: {len(video_database)}\n\n"
-            f"📝 Fix checklist:\n"
-            f"1. ✅ Add 0.0.0.0/0 to Network Access\n"
-            f"2. ✅ Check password in connection string\n"
-            f"3. ✅ Ensure database user has read/write permissions"
         )
+        
+        # Add MongoDB document count if connected
+        if mongo_client is not None and 'videos' in mongo_client:
+            try:
+                mongo_count = mongo_client['videos'].count_documents({})
+                response += f"MongoDB documents: {mongo_count}\n"
+                response += f"Sync status: {'✅' if len(video_database) == mongo_count else '⚠️ Not synced'}"
+            except:
+                response += "⚠️ Could not count MongoDB documents"
         
         bot.reply_to(message, response)
         
     except Exception as e:
         bot.reply_to(message, f"Test error: {str(e)[:100]}")
+
+@bot.message_handler(commands=['synctomongo'])
+def sync_to_mongo(message):
+    """Sync local videos to MongoDB"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        if mongo_client is None:
+            bot.reply_to(message, "❌ MongoDB not connected. Fix connection first.")
+            return
+        
+        count = len(video_database)
+        if count == 0:
+            bot.reply_to(message, "❌ No videos in local database")
+            return
+        
+        # Save to MongoDB (this will sync)
+        success = save_database()
+        
+        if success:
+            # Verify sync
+            mongo_count = mongo_client['videos'].count_documents({})
+            
+            response = (
+                f"✅ Sync Complete!\n\n"
+                f"Local videos: {count}\n"
+                f"MongoDB videos: {mongo_count}\n\n"
+                f"Status: {'✅ Synced' if count == mongo_count else '⚠️ Count mismatch'}\n"
+                f"Now MongoDB will auto-backup new videos."
+            )
+        else:
+            response = "❌ Sync failed. Check logs."
+        
+        bot.reply_to(message, response)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Sync error: {str(e)[:200]}")
+
+@bot.message_handler(commands=['mongoinfo'])
+def mongo_info(message):
+    """Detailed MongoDB information"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        if mongo_client is None:
+            bot.reply_to(message, "❌ MongoDB client is None")
+            return
+        
+        info = "📊 MongoDB Status:\n\n"
+        info += f"Client type: {type(mongo_client)}\n"
+        
+        if isinstance(mongo_client, dict):
+            info += f"Keys in mongo_client: {list(mongo_client.keys())}\n"
+            
+            if 'videos' in mongo_client:
+                try:
+                    count = mongo_client['videos'].count_documents({})
+                    info += f"Videos collection: {count} documents\n"
+                except:
+                    info += "Videos collection: Error counting\n"
+            
+            if 'sent_videos' in mongo_client:
+                try:
+                    count = mongo_client['sent_videos'].count_documents({})
+                    info += f"Sent videos: {count} documents\n"
+                except:
+                    info += "Sent videos: Error counting\n"
+        else:
+            info += "⚠️ mongo_client is not a dictionary\n"
+        
+        bot.reply_to(message, info)
+        
+    except Exception as e:
+        bot.reply_to(message, f"Error: {str(e)[:200]}")
 
 @bot.message_handler(commands=['simple'])
 def simple_status(message):
@@ -379,7 +474,7 @@ def simple_status(message):
             f"Ready: {with_files}\n"
             f"Auto-delete queue: {pending}\n"
             f"Bot: ✅ Working\n"
-            f"MongoDB: {'✅' if mongo_client else '❌'}"
+            f"MongoDB: {'✅' if mongo_client is not None else '❌'}"
         )
         
         bot.reply_to(message, response)
@@ -395,7 +490,7 @@ def bot_status_command(message):
     
     try:
         # MongoDB status
-        mongo_status = "✅ Connected" if mongo_client else "❌ Not connected (using local files)"
+        mongo_status = "✅ Connected" if mongo_client is not None else "❌ Not connected (using local files)"
         
         # Count videos
         total_videos = len(video_database)
@@ -415,7 +510,8 @@ def bot_status_command(message):
             f"• Admin ID: {YOUR_TELEGRAM_ID}\n\n"
             
             f"✅ Bot is working normally!\n"
-            f"Test MongoDB: /mongotest"
+            f"Test MongoDB: /mongotest\n"
+            f"Sync to MongoDB: /synctomongo"
         )
         
         bot.reply_to(message, response)
@@ -750,17 +846,17 @@ def setup_webhooks():
     set_admin_webhook()
     return jsonify({
         "message": "Webhooks configured!",
-        "mongodb": "Connected" if mongo_client else "Not connected",
+        "mongodb": "Connected" if mongo_client is not None else "Not connected",
         "videos_in_db": len(video_database)
     })
 
 @app.route('/')
 def home():
-    mongo_status = "✅ Connected" if mongo_client else "⚠️ Local only"
+    mongo_status = "✅ Connected" if mongo_client is not None else "⚠️ Local only"
     return f"✅ Video Bot running! MongoDB: {mongo_status}"
 
 if __name__ == '__main__':
     logger.info(f"🤖 Bot started with MongoDB support")
     logger.info(f"📊 Videos in database: {len(video_database)}")
-    logger.info(f"🔗 MongoDB: {'Connected' if mongo_client else 'Not connected'}")
+    logger.info(f"🔗 MongoDB: {'Connected' if mongo_client is not None else 'Not connected'}")
     app.run(host='0.0.0.0', port=5000)
