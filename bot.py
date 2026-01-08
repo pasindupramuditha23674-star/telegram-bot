@@ -31,6 +31,10 @@ app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
+# Global database variables
+video_database = {}
+sent_videos = {}  # Global variable for tracking sent videos
+
 # ===== MONGODB CONNECTION =====
 def connect_to_mongodb():
     """Connect to MongoDB Atlas"""
@@ -143,33 +147,46 @@ def save_database():
 
 # ===== SENT VIDEOS TRACKER =====
 def load_sent_videos():
-    global sent_videos
+    global sent_videos  # FIX: Added global declaration
     try:
         # Try MongoDB first
         if mongo_client and mongo_client['sent_videos']:
+            # Load from MongoDB
+            cursor = mongo_client['sent_videos'].find({})
             sent_videos = {}
-            # We'll load as needed
+            for doc in cursor:
+                key = doc['key']
+                doc.pop('_id', None)
+                doc.pop('key', None)
+                sent_videos[key] = doc
+            logger.info(f"✅ Loaded {len(sent_videos)} sent videos from MongoDB")
         else:
             # Local file
             if os.path.exists('sent_videos.json'):
                 with open('sent_videos.json', 'r') as f:
                     sent_videos = json.load(f)
+                    logger.info(f"✅ Loaded {len(sent_videos)} sent videos from local file")
             else:
                 sent_videos = {}
+                logger.info("📂 Starting fresh sent videos tracker")
     except Exception as e:
         logger.error(f"Error loading sent videos: {e}")
         sent_videos = {}
 
 def save_sent_videos():
+    global sent_videos  # FIX: Added global declaration
     try:
         # Save to MongoDB if available
         if mongo_client and mongo_client['sent_videos']:
             # Clear old and save new
             mongo_client['sent_videos'].delete_many({})
             if sent_videos:
-                mongo_client['sent_videos'].insert_many([
-                    {'key': k, **v} for k, v in sent_videos.items()
-                ])
+                documents = []
+                for key, data in sent_videos.items():
+                    doc = data.copy()
+                    doc['key'] = key
+                    documents.append(doc)
+                mongo_client['sent_videos'].insert_many(documents)
         
         # Local backup
         with open('sent_videos.json', 'w') as f:
@@ -179,6 +196,7 @@ def save_sent_videos():
         logger.error(f"Error saving sent videos: {e}")
 
 def add_sent_video(user_id, message_id, video_id, sent_time):
+    global sent_videos  # FIX: Added global declaration
     key = f"{user_id}_{message_id}"
     sent_videos[key] = {
         'user_id': user_id,
@@ -188,13 +206,23 @@ def add_sent_video(user_id, message_id, video_id, sent_time):
         'delete_at': (datetime.now() + timedelta(hours=1)).isoformat()
     }
     save_sent_videos()
+    logger.info(f"✅ Added sent video: {video_id} for user {user_id}")
 
 # ===== AUTO DELETE THREAD =====
 def auto_delete_worker():
+    global sent_videos  # FIX: This was missing - causing the error!
+    
     while True:
         try:
             current_time = datetime.now()
             to_delete = []
+            
+            # Check if sent_videos exists
+            if sent_videos is None:
+                logger.warning("sent_videos is None, initializing empty dict")
+                sent_videos = {}
+                time.sleep(60)
+                continue
             
             for key, data in sent_videos.items():
                 if 'delete_at' in data:
