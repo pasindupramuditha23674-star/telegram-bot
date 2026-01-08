@@ -16,10 +16,8 @@ BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
 CHANNEL_ID = "@storagechannel01"
-# ===============================
-
-# Website configuration
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
+# ===============================
 
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -386,10 +384,375 @@ def handle_callback(call):
                 logger.error(f"Error sending video via callback: {e}")
                 bot.answer_callback_query(call.id, "❌ Failed to send video")
 
+# ==================== DIAGNOSTIC COMMANDS ====================
+
+@bot.message_handler(commands=['testvideo'])
+def test_video_command(message):
+    """Test if a video file_id still works"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        bot.reply_to(message, "⛔ Admin only.")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "Usage: /testvideo [video_number]\nExample: /testvideo 1")
+            return
+        
+        video_num = parts[1]
+        video_id = f"video{video_num}"
+        
+        if video_id not in video_database:
+            bot.reply_to(message, f"❌ {video_id} not found in database")
+            return
+        
+        file_id = video_database[video_id].get('file_id')
+        if not file_id:
+            bot.reply_to(message, f"❌ {video_id} has no file_id")
+            return
+        
+        # Try to send the video
+        try:
+            sent_msg = bot.send_video(
+                chat_id=YOUR_TELEGRAM_ID,
+                video=file_id,
+                caption=f"✅ TEST SUCCESS: {video_id}\nFile ID still works!",
+                protect_content=True
+            )
+            
+            # Add to auto-delete tracker
+            add_sent_video(
+                user_id=YOUR_TELEGRAM_ID,
+                message_id=sent_msg.message_id,
+                video_id=video_id,
+                sent_time=datetime.now().isoformat()
+            )
+            
+            bot.reply_to(message, 
+                f"✅ **Test Successful!**\n\n"
+                f"Video: {video_id}\n"
+                f"Status: File ID is valid\n"
+                f"Video sent to you (will auto-delete in 1 hour)"
+            )
+            
+        except Exception as send_error:
+            error_msg = str(send_error)
+            logger.error(f"Test failed for {video_id}: {error_msg}")
+            
+            bot.reply_to(message,
+                f"❌ **TEST FAILED**\n\n"
+                f"Video: {video_id}\n"
+                f"Error: {error_msg[:100]}\n\n"
+                f"**Solution:**\n"
+                f"1. Send video again to bot\n"
+                f"2. Reply with: /savevideo {video_num}"
+            )
+            
+    except Exception as e:
+        logger.error(f"Error in test_video_command: {e}")
+        bot.reply_to(message, f"❌ Command error: {str(e)[:200]}")
+
+@bot.message_handler(commands=['checkall'])
+def check_all_videos(message):
+    """Check all videos in database"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        bot.reply_to(message, "⛔ Admin only.")
+        return
+    
+    try:
+        if not video_database:
+            bot.reply_to(message, "📭 No videos in database")
+            return
+        
+        bot.reply_to(message, "🔄 Testing all videos... This may take a minute.")
+        
+        working = []
+        failed = []
+        total = len(video_database)
+        
+        for video_id in sorted(video_database.keys()):
+            video_num = video_id.replace('video', '')
+            file_id = video_database[video_id].get('file_id')
+            
+            if not file_id:
+                failed.append(f"{video_id} (no file_id)")
+                continue
+            
+            # Test the file_id
+            try:
+                # Quick test - try to get file info
+                bot.get_file(file_id)
+                working.append(video_id)
+            except Exception as e:
+                failed.append(f"{video_id} - {str(e)[:30]}")
+        
+        # Create report
+        response = f"📊 **Video Health Check**\n\n"
+        response += f"Total videos: {total}\n"
+        response += f"✅ Working: {len(working)}\n"
+        response += f"❌ Failed: {len(failed)}\n\n"
+        
+        if failed:
+            response += "**Failed Videos:**\n"
+            for fail in failed[:10]:
+                response += f"• {fail}\n"
+            
+            if len(failed) > 10:
+                response += f"... and {len(failed)-10} more\n\n"
+            
+            response += "\n**To fix:**\n"
+            response += "For each failed video:\n"
+            response += "1. Send video to bot\n"
+            response += "2. Reply with: /savevideo [number]\n"
+        
+        if working:
+            response += "\n**Working Videos:**\n"
+            for vid in working[:5]:
+                response += f"• {vid}\n"
+            
+            if len(working) > 5:
+                response += f"... and {len(working)-5} more"
+        
+        bot.reply_to(message, response, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Error in check_all_videos: {e}")
+        bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
+
+@bot.message_handler(commands=['dbfix'])
+def fix_database_command(message):
+    """Fix database issues"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        # Reload database from file
+        load_database()
+        
+        # Count videos
+        total = len(video_database)
+        
+        # Check for missing file_ids
+        missing_file_ids = []
+        for video_id, data in video_database.items():
+            if 'file_id' not in data or not data['file_id']:
+                missing_file_ids.append(video_id)
+        
+        response = f"🛠️ **Database Repair Report**\n\n"
+        response += f"Videos in DB: {total}\n"
+        response += f"Missing file_ids: {len(missing_file_ids)}\n\n"
+        
+        if missing_file_ids:
+            response += "**Videos needing re-upload:**\n"
+            for vid in missing_file_ids[:5]:
+                num = vid.replace('video', '')
+                response += f"• /savevideo {num}\n"
+        
+        # Save database (ensures it's written)
+        save_database()
+        
+        response += f"\n✅ Database reloaded and saved"
+        
+        bot.reply_to(message, response, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Error in dbfix: {e}")
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['videos'])
+def list_videos_simple(message):
+    """Simple list of all videos"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        if not video_database:
+            bot.reply_to(message, "No videos in database")
+            return
+        
+        response = "📹 **All Videos:**\n\n"
+        for video_id in sorted(video_database.keys()):
+            num = video_id.replace('video', '')
+            data = video_database[video_id]
+            
+            has_file = "✅" if data.get('file_id') else "❌"
+            has_thumb = "🖼️" if data.get('thumbnail_id') else "📭"
+            
+            response += f"{has_file} Video {num} {has_thumb}\n"
+        
+        response += f"\nTotal: {len(video_database)} videos"
+        response += f"\n\nTest any video: /testvideo [number]"
+        
+        bot.reply_to(message, response)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['status'])
+def bot_status_command(message):
+    """Check bot and database status"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        # Database info
+        db_size = os.path.getsize(DB_FILE) if os.path.exists(DB_FILE) else 0
+        sent_size = os.path.getsize(SENT_VIDEOS_FILE) if os.path.exists(SENT_VIDEOS_FILE) else 0
+        
+        # Count videos with/without file_ids
+        videos_with_file = sum(1 for v in video_database.values() if v.get('file_id'))
+        
+        response = (
+            f"🤖 **Bot Status Report**\n\n"
+            f"📊 **Database:**\n"
+            f"• Videos: {len(video_database)}\n"
+            f"• With file_id: {videos_with_file}\n"
+            f"• DB file size: {db_size:,} bytes\n"
+            f"• Pending deletions: {len(sent_videos)}\n\n"
+            
+            f"🔧 **System:**\n"
+            f"• Channel: {CHANNEL_ID}\n"
+            f"• Website: {WEBSITE_BASE_URL}\n"
+            f"• Admin ID: {YOUR_TELEGRAM_ID}\n\n"
+            
+            f"⚡ **Quick Commands:**\n"
+            f"• /checkall - Test all videos\n"
+            f"• /videos - List all videos\n"
+            f"• /dbfix - Fix database issues\n"
+            f"• /testvideo [num] - Test specific video"
+        )
+        
+        bot.reply_to(message, response, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['reuploadall'])
+def reupload_all_videos(message):
+    """Re-upload all videos from database"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        bot.reply_to(message, "Starting video re-upload process...")
+        
+        expired_videos = []
+        working_videos = []
+        
+        for video_id in sorted(video_database.keys()):
+            video_num = video_id.replace('video', '')
+            
+            try:
+                # Test if file_id still works
+                bot.send_video(
+                    YOUR_TELEGRAM_ID,
+                    video_database[video_id]['file_id'],
+                    caption=f"Testing: {video_id}"
+                )
+                working_videos.append(video_id)
+                
+            except Exception as e:
+                expired_videos.append({
+                    'video_id': video_id,
+                    'error': str(e)[:50]
+                })
+        
+        # Report results
+        response = f"📊 **Video Status Report**\n\n"
+        response += f"✅ Working: {len(working_videos)} videos\n"
+        response += f"❌ Expired: {len(expired_videos)} videos\n\n"
+        
+        if expired_videos:
+            response += "**Expired Videos:**\n"
+            for item in expired_videos[:10]:
+                response += f"• {item['video_id']}\n"
+            
+            if len(expired_videos) > 10:
+                response += f"... and {len(expired_videos)-10} more\n\n"
+            
+            response += "\n**Action Required:**\n"
+            response += "Re-upload expired videos using /savevideo command"
+        
+        bot.reply_to(message, response, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['videostats'])
+def video_stats_command(message):
+    """Show video health statistics"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    working = 0
+    failing = 0
+    needs_reupload = []
+    
+    for video_id, data in video_database.items():
+        fail_count = data.get('fail_count', 0)
+        if fail_count >= 2:
+            failing += 1
+            needs_reupload.append(video_id)
+        else:
+            working += 1
+    
+    response = (
+        f"📊 **Video Health Report**\n\n"
+        f"✅ Working videos: {working}\n"
+        f"⚠️ Failing videos: {failing}\n"
+        f"📁 Total videos: {len(video_database)}\n\n"
+    )
+    
+    if needs_reupload:
+        response += "**Need Re-upload:**\n"
+        for vid in needs_reupload[:5]:
+            num = vid.replace('video', '')
+            response += f"• /savevideo {num}\n"
+        
+        if len(needs_reupload) > 5:
+            response += f"... and {len(needs_reupload)-5} more\n"
+    
+    bot.reply_to(message, response, parse_mode='Markdown')
+
+@bot.message_handler(commands=['fixvideo'])
+def fix_video_command(message):
+    """Re-upload a specific failing video"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "Usage: /fixvideo [video_number]\nExample: /fixvideo 1")
+            return
+        
+        video_num = parts[1]
+        video_id = f"video{video_num}"
+        
+        if video_id not in video_database:
+            bot.reply_to(message, f"❌ Video {video_num} not found")
+            return
+        
+        # Reset fail count
+        if 'fail_count' in video_database[video_id]:
+            video_database[video_id]['fail_count'] = 0
+            save_database()
+        
+        bot.reply_to(message,
+            f"✅ Video {video_num} marked as working\n\n"
+            f"Please re-upload the video:\n"
+            f"1. Send video to bot\n"
+            f"2. Reply with: /savevideo {video_num}"
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
 # ==================== ADMIN COMMANDS ====================
 @bot.message_handler(commands=['listvideos'])
 def list_all_videos(message):
     if message.from_user.id != YOUR_TELEGRAM_ID:
+        bot.reply_to(message, "⛔ Admin only.")
         return
     
     if not video_database:
@@ -400,13 +763,43 @@ def list_all_videos(message):
     for vid_id in sorted(video_database.keys()):
         num = vid_id.replace('video', '')
         data = video_database[vid_id]
-        has_thumb = "✅ Has thumbnail" if 'thumbnail_id' in data else "❌ No thumbnail"
-        response += f"• Video {num}\n"
-        response += f"  {has_thumb}\n"
+        if data.get('permanent', False):
+            status = "✅ PERMANENT"
+        else:
+            status = "⚠ TEMPORARY"
+        response += f"• Video {num} ({status})\n"
+        response += f"  Added: {data.get('added_date', 'Unknown')}\n"
         response += f"  URL: {WEBSITE_BASE_URL}/?video={num}\n\n"
     
     response += f"Total: {len(video_database)} videos"
     bot.reply_to(message, response)
+
+@bot.message_handler(commands=['clearvideos'])
+def clear_old_sent_videos(message):
+    """Manually clear old sent videos"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        current_time = datetime.now()
+        deleted_count = 0
+        
+        for key, data in list(sent_videos.items()):
+            if 'delete_at' in data:
+                delete_time = datetime.fromisoformat(data['delete_at'])
+                if current_time >= delete_time:
+                    try:
+                        bot.delete_message(data['user_id'], data['message_id'])
+                        deleted_count += 1
+                    except:
+                        pass
+                    del sent_videos[key]
+        
+        save_sent_videos()
+        bot.reply_to(message, f"✅ Cleared {deleted_count} old videos")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
 
 @bot.message_handler(commands=['posttochannel'])
 def manual_post_to_channel(message):
@@ -416,7 +809,7 @@ def manual_post_to_channel(message):
     try:
         parts = message.text.split()
         if len(parts) != 2:
-            bot.reply_to(message, "Usage: /posttochannel [video_number]")
+            bot.reply_to(message, "Usage: /posttochannel [video_number]\nExample: /posttochannel 1")
             return
         
         video_num = parts[1]
@@ -426,7 +819,7 @@ def manual_post_to_channel(message):
             bot.reply_to(message, f"❌ Video {video_num} not found")
             return
         
-        # Create post manually
+        # For manual posts without thumbnail
         website_url = f"{WEBSITE_BASE_URL}/?video={video_num}"
         
         keyboard = telebot.types.InlineKeyboardMarkup()
@@ -437,28 +830,15 @@ def manual_post_to_channel(message):
             )
         )
         
-        video_id = f"video{video_num}"
-        
-        # Check for custom thumbnail
-        if video_id in video_database and 'thumbnail_id' in video_database[video_id]:
-            thumbnail_id = video_database[video_id]['thumbnail_id']
-            
-            post_msg = bot.send_photo(
-                chat_id=CHANNEL_ID,
-                photo=thumbnail_id,
-                caption=f"🎥 **Video {video_num}**\n\nClick the button below to watch 👇",
-                reply_markup=keyboard,
-                parse_mode='Markdown'
-            )
-        else:
+        try:
             post_msg = bot.send_message(
                 chat_id=CHANNEL_ID,
-                text=f"🎥 **Video {video_num} Available!**\n\nClick: {website_url}",
-                reply_markup=keyboard,
-                parse_mode='Markdown'
+                text=f"🎥 Video {video_num} Now Available!\n\nClick the button below to watch 👇",
+                reply_markup=keyboard
             )
-        
-        bot.reply_to(message, f"✅ Video {video_num} posted to channel!")
+            bot.reply_to(message, f"✅ Video {video_num} posted to channel!")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Failed to post: {str(e)}")
             
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
