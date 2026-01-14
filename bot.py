@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
-CHANNEL_ID = "@storagechannel01"
+CHANNEL_ID = "@RedZoneLk"  # UPDATED: Changed from @storagechannel01
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
 # ===============================
 
@@ -616,7 +616,7 @@ def post_to_channel(video_num, video_message=None):
             thumbnail_id = video_database[video_id]['thumbnail_id']
             
             post_msg = bot.send_photo(
-                chat_id=CHANNEL_ID,
+                chat_id=CHANNEL_ID,  # UPDATED: Now posts to @RedZoneLk
                 photo=thumbnail_id,
                 caption=f"🎥 **Video {video_num}**\n\nClick the button below to watch 👇",
                 reply_markup=keyboard,
@@ -627,7 +627,7 @@ def post_to_channel(video_num, video_message=None):
         # 2. No custom thumbnail, use video preview
         elif video_message and video_message.video:
             post_msg = bot.send_video(
-                chat_id=CHANNEL_ID,
+                chat_id=CHANNEL_ID,  # UPDATED: Now posts to @RedZoneLk
                 video=video_message.video.file_id,
                 caption=f"🎥 **Video {video_num}**\n\nClick the button below to watch 👇",
                 reply_markup=keyboard,
@@ -639,7 +639,7 @@ def post_to_channel(video_num, video_message=None):
         # 3. Fallback: text only
         else:
             post_msg = bot.send_message(
-                chat_id=CHANNEL_ID,
+                chat_id=CHANNEL_ID,  # UPDATED: Now posts to @RedZoneLk
                 text=f"🎥 **Video {video_num} Available!**\n\nClick: {website_url}",
                 reply_markup=keyboard,
                 parse_mode='Markdown'
@@ -722,7 +722,7 @@ def save_video_command(message):
         )
         
         if channel_posted:
-            response += f"✅ Posted to: {CHANNEL_ID}"
+            response += f"✅ Posted to: {CHANNEL_ID}"  # UPDATED: Shows @RedZoneLk
         else:
             response += f"⚠ Channel post failed"
         
@@ -859,4 +859,5 @@ if __name__ == '__main__':
     logger.info(f"🤖 Bot started with MongoDB support")
     logger.info(f"📊 Videos in database: {len(video_database)}")
     logger.info(f"🔗 MongoDB: {'Connected' if mongo_client is not None else 'Not connected'}")
+    logger.info(f"📢 Channel: {CHANNEL_ID}")  # UPDATED: Logs @RedZoneLk
     app.run(host='0.0.0.0', port=5000)
