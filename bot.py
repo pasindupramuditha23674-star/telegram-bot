@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
-CHANNEL_ID = "@RedZoneLk"  # UPDATED: Changed from @storagechannel01
+CHANNEL_ID = "@RedZoneLk"
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
 # ===============================
 
@@ -31,9 +31,74 @@ app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
+# Track app start time for uptime monitoring
+app_start_time = time.time()
+
 # Global database variables
 video_database = {}
 sent_videos = {}  # Global variable for tracking sent videos
+
+# ===== KEEP-ALIVE HEALTH CHECK ENDPOINT =====
+@app.route('/health')
+@app.route('/ping')
+def health_check():
+    """Health check endpoint for pinging services (UptimeRobot)"""
+    try:
+        # Quick status check
+        mongo_status = "connected" if mongo_client is not None else "disconnected"
+        
+        response = {
+            "status": "healthy",
+            "service": "telegram-video-bot",
+            "timestamp": datetime.now().isoformat(),
+            "videos": len(video_database),
+            "mongodb": mongo_status,
+            "uptime_seconds": int(time.time() - app_start_time),
+            "endpoints": {
+                "health": "/health",
+                "ping": "/ping",
+                "home": "/",
+                "setup": "/setup"
+            }
+        }
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return jsonify({"status": "error", "message": str(e)[:100]}), 500
+
+# ===== SELF-PING BACKUP SYSTEM =====
+def self_ping_worker():
+    """Self-ping to keep Render awake (backup system)"""
+    # Lazy import to avoid dependency if not needed
+    try:
+        import requests
+    except ImportError:
+        logger.warning("⚠️ requests module not installed, self-ping disabled")
+        return
+    
+    ping_count = 0
+    while True:
+        try:
+            # Ping our own health endpoint
+            response = requests.get('https://telegram-bot-7-dqqa.onrender.com/health', timeout=10)
+            ping_count += 1
+            
+            # Log every 10th ping to avoid spam
+            if ping_count % 10 == 0:
+                logger.info(f"✅ Self-ping #{ping_count}: {response.status_code}")
+                
+        except requests.exceptions.RequestException as e:
+            # Don't log normal timeouts/errors to avoid spam
+            if ping_count % 20 == 0:
+                logger.warning(f"Self-ping failed (attempt #{ping_count}): {e}")
+        except Exception as e:
+            if ping_count % 20 == 0:
+                logger.error(f"Self-ping error: {e}")
+        
+        # Sleep for 8 minutes (Render needs <15 minute intervals)
+        # This is a BACKUP in case UptimeRobot fails
+        time.sleep(480)  # 8 minutes
 
 # ===== MONGODB CONNECTION WITH SSL FIX =====
 def connect_to_mongodb():
@@ -318,6 +383,31 @@ auto_delete_thread.start()
 load_database()
 load_sent_videos()
 
+# ===== BOT WARMUP FUNCTION =====
+def warmup_bot():
+    """Pre-load everything to reduce cold start time"""
+    logger.info("🔥 Warming up bot for faster response...")
+    
+    # Pre-load database if empty
+    if len(video_database) == 0:
+        load_database()
+    
+    # Pre-connect to MongoDB if not connected
+    if mongo_client is None:
+        connect_to_mongodb()
+    
+    # Test Telegram API connection
+    try:
+        bot.get_me()
+        logger.info("✅ Bot warmed up successfully")
+    except Exception as e:
+        logger.warning(f"Bot warmup warning: {e}")
+    
+    return True
+
+# Warm up the bot on startup
+warmup_bot()
+
 # ===== DIAGNOSTIC COMMANDS =====
 @bot.message_handler(commands=['mongotest'])
 def test_mongodb(message):
@@ -474,7 +564,8 @@ def simple_status(message):
             f"Ready: {with_files}\n"
             f"Auto-delete queue: {pending}\n"
             f"Bot: ✅ Working\n"
-            f"MongoDB: {'✅' if mongo_client is not None else '❌'}"
+            f"MongoDB: {'✅' if mongo_client is not None else '❌'}\n"
+            f"Uptime: {int(time.time() - app_start_time)}s"
         )
         
         bot.reply_to(message, response)
@@ -496,18 +587,24 @@ def bot_status_command(message):
         total_videos = len(video_database)
         videos_with_file = sum(1 for v in video_database.values() if v.get('file_id'))
         
+        # Uptime calculation
+        uptime_seconds = int(time.time() - app_start_time)
+        uptime_str = f"{uptime_seconds // 3600}h {(uptime_seconds % 3600) // 60}m"
+        
         response = (
             f"🤖 BOT STATUS REPORT\n\n"
             f"📊 Database Status:\n"
             f"• MongoDB: {mongo_status}\n"
             f"• Total videos: {total_videos}\n"
             f"• Videos with file_id: {videos_with_file}\n"
-            f"• Pending deletions: {len(sent_videos)}\n\n"
+            f"• Pending deletions: {len(sent_videos)}\n"
+            f"• Uptime: {uptime_str}\n\n"
             
             f"🔧 System Info:\n"
             f"• Channel: {CHANNEL_ID}\n"
             f"• Website: {WEBSITE_BASE_URL}\n"
-            f"• Admin ID: {YOUR_TELEGRAM_ID}\n\n"
+            f"• Admin ID: {YOUR_TELEGRAM_ID}\n"
+            f"• Health check: /health\n\n"
             
             f"✅ Bot is working normally!\n"
             f"Test MongoDB: /mongotest\n"
@@ -518,6 +615,46 @@ def bot_status_command(message):
         
     except Exception as e:
         bot.reply_to(message, f"✅ Bot is running (status details unavailable)")
+
+@bot.message_handler(commands=['keepalive'])
+def keepalive_status(message):
+    """Check keep-alive system status"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        # Test health endpoint
+        import requests
+        health_url = "https://telegram-bot-7-dqqa.onrender.com/health"
+        
+        try:
+            response = requests.get(health_url, timeout=10)
+            health_status = f"✅ Responding ({response.status_code})"
+            health_data = response.json()
+        except Exception as e:
+            health_status = f"❌ Error: {str(e)[:100]}"
+            health_data = {}
+        
+        response = (
+            f"🔧 KEEP-ALIVE SYSTEM STATUS\n\n"
+            f"Health endpoint: {health_status}\n"
+            f"URL: {health_url}\n"
+            f"Self-ping: {'✅ Active' if 'self_ping_thread' in globals() else '❌ Inactive'}\n"
+            f"Bot uptime: {int(time.time() - app_start_time)} seconds\n\n"
+            f"📝 Setup UptimeRobot:\n"
+            f"1. Go to UptimeRobot.com\n"
+            f"2. Add monitor: {health_url}\n"
+            f"3. Set interval: 5 minutes\n"
+            f"4. Bot stays awake 24/7\n\n"
+            f"Current status: {health_data.get('status', 'Unknown')}"
+        )
+        
+        bot.reply_to(message, response)
+        
+    except ImportError:
+        bot.reply_to(message, "❌ requests module not installed for health check")
+    except Exception as e:
+        bot.reply_to(message, f"Keep-alive check error: {str(e)[:100]}")
 
 @bot.message_handler(commands=['emergencybackup'])
 def emergency_backup(message):
@@ -616,7 +753,7 @@ def post_to_channel(video_num, video_message=None):
             thumbnail_id = video_database[video_id]['thumbnail_id']
             
             post_msg = bot.send_photo(
-                chat_id=CHANNEL_ID,  # UPDATED: Now posts to @RedZoneLk
+                chat_id=CHANNEL_ID,
                 photo=thumbnail_id,
                 caption=f"🎥 **Video {video_num}**\n\nClick the button below to watch 👇",
                 reply_markup=keyboard,
@@ -627,7 +764,7 @@ def post_to_channel(video_num, video_message=None):
         # 2. No custom thumbnail, use video preview
         elif video_message and video_message.video:
             post_msg = bot.send_video(
-                chat_id=CHANNEL_ID,  # UPDATED: Now posts to @RedZoneLk
+                chat_id=CHANNEL_ID,
                 video=video_message.video.file_id,
                 caption=f"🎥 **Video {video_num}**\n\nClick the button below to watch 👇",
                 reply_markup=keyboard,
@@ -639,7 +776,7 @@ def post_to_channel(video_num, video_message=None):
         # 3. Fallback: text only
         else:
             post_msg = bot.send_message(
-                chat_id=CHANNEL_ID,  # UPDATED: Now posts to @RedZoneLk
+                chat_id=CHANNEL_ID,
                 text=f"🎥 **Video {video_num} Available!**\n\nClick: {website_url}",
                 reply_markup=keyboard,
                 parse_mode='Markdown'
@@ -722,7 +859,7 @@ def save_video_command(message):
         )
         
         if channel_posted:
-            response += f"✅ Posted to: {CHANNEL_ID}"  # UPDATED: Shows @RedZoneLk
+            response += f"✅ Posted to: {CHANNEL_ID}"
         else:
             response += f"⚠ Channel post failed"
         
@@ -853,11 +990,23 @@ def setup_webhooks():
 @app.route('/')
 def home():
     mongo_status = "✅ Connected" if mongo_client is not None else "⚠️ Local only"
-    return f"✅ Video Bot running! MongoDB: {mongo_status}"
+    uptime = int(time.time() - app_start_time)
+    uptime_str = f"{uptime // 3600}h {(uptime % 3600) // 60}m"
+    return f"✅ Video Bot running! MongoDB: {mongo_status} | Uptime: {uptime_str} | Health: /health"
+
+# ===== START SELF-PING THREAD (BACKUP) =====
+try:
+    self_ping_thread = threading.Thread(target=self_ping_worker, daemon=True)
+    self_ping_thread.start()
+    logger.info("✅ Self-ping backup thread started")
+except Exception as e:
+    logger.warning(f"⚠️ Could not start self-ping thread: {e}")
 
 if __name__ == '__main__':
     logger.info(f"🤖 Bot started with MongoDB support")
     logger.info(f"📊 Videos in database: {len(video_database)}")
     logger.info(f"🔗 MongoDB: {'Connected' if mongo_client is not None else 'Not connected'}")
-    logger.info(f"📢 Channel: {CHANNEL_ID}")  # UPDATED: Logs @RedZoneLk
+    logger.info(f"📢 Channel: {CHANNEL_ID}")
+    logger.info(f"🏥 Health endpoint: /health")
+    logger.info(f"⏱️ Bot will stay awake with UptimeRobot pings")
     app.run(host='0.0.0.0', port=5000)
