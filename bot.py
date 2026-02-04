@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
-CHANNEL_ID = "@eX8PcWeteMM4MjJl"
+CHANNEL_ID = "-1002264208544"
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
 
 app = Flask(__name__)
@@ -37,8 +37,7 @@ def get_channel_info():
             'success': True,
             'title': chat.title,
             'type': chat.type,
-            'id': chat.id,
-            'username': chat.username
+            'id': chat.id
         }
     except Exception as e:
         return {'success': False, 'error': str(e)}
@@ -58,7 +57,6 @@ def health_check():
             "videos": len(video_database),
             "mongodb": mongo_status,
             "channel": channel_status,
-            "channel_name": channel_info.get('title', 'Unknown'),
             "uptime_seconds": int(time.time() - app_start_time)
         }
         return jsonify(response), 200
@@ -77,8 +75,7 @@ def connect_to_mongodb():
             connectTimeoutMS=15000,
             socketTimeoutMS=15000,
             tls=True,
-            tlsAllowInvalidCertificates=True,
-            appname="video-bot"
+            tlsAllowInvalidCertificates=True
         )
         
         client.admin.command('ping')
@@ -251,7 +248,7 @@ def channel_info_command(message):
     try:
         info = get_channel_info()
         if info['success']:
-            response = f"📢 Channel: {info['title']}\nID: {info['id']}\nType: {info['type']}"
+            response = f"✅ Channel: {info['title']}\nID: {info['id']}"
         else:
             response = f"❌ Error: {info.get('error')}"
         bot.reply_to(message, response)
@@ -264,14 +261,18 @@ def test_channel_post(message):
         return
     
     try:
+        keyboard = telebot.types.InlineKeyboardMarkup()
+        keyboard.add(telebot.types.InlineKeyboardButton("🎬 Test", url=WEBSITE_BASE_URL))
+        
         test_msg = bot.send_message(
             CHANNEL_ID,
-            "✅ Test message from bot",
+            "✅ Bot test message with button",
+            reply_markup=keyboard,
             parse_mode='Markdown'
         )
-        bot.reply_to(message, "✅ Channel test successful!")
+        bot.reply_to(message, "✅ Channel test successful! Check your channel.")
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
+        bot.reply_to(message, f"❌ Channel error: {str(e)[:200]}")
 
 @bot.message_handler(commands=['mongotest'])
 def test_mongodb(message):
@@ -292,7 +293,7 @@ def test_mongodb(message):
         else:
             test_status = "❌ URI NOT SET"
         
-        response = f"MongoDB: {test_status}\nCurrent: {'✅' if mongo_client is not None else '❌'}"
+        response = f"MongoDB: {test_status}"
         bot.reply_to(message, response)
     except Exception as e:
         bot.reply_to(message, f"Test error: {str(e)[:100]}")
@@ -349,7 +350,7 @@ def set_caption_command(message):
     try:
         parts = message.text.split(maxsplit=2)
         if len(parts) < 3:
-            bot.reply_to(message, "Usage: /caption [video_number] [your custom caption]\nExample: /caption 1 Check out this amazing video!")
+            bot.reply_to(message, "Usage: /caption [video_number] [your custom caption]")
             return
         
         video_num = parts[1]
@@ -367,7 +368,7 @@ def set_caption_command(message):
         video_database[video_id]['custom_caption'] = custom_caption
         save_database()
         
-        bot.reply_to(message, f"✅ Custom caption set for Video {video_num}!\n\nCaption: {custom_caption}")
+        bot.reply_to(message, f"✅ Custom caption set for Video {video_num}!\n\n{custom_caption}")
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
 
@@ -387,50 +388,47 @@ def post_to_channel(video_num, video_message=None):
         
         caption_text += f"\n\nClick the button below to watch 👇"
         
-        methods_to_try = []
+        try:
+            if video_id in video_database and 'thumbnail_id' in video_database[video_id]:
+                bot.send_photo(
+                    chat_id=CHANNEL_ID,
+                    photo=video_database[video_id]['thumbnail_id'],
+                    caption=caption_text,
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+                return True
+        except Exception as e:
+            logger.warning(f"Photo post failed: {e}")
         
-        if video_id in video_database and 'thumbnail_id' in video_database[video_id]:
-            methods_to_try.append(('photo', video_database[video_id]['thumbnail_id']))
+        try:
+            if video_message and video_message.video:
+                bot.send_video(
+                    chat_id=CHANNEL_ID,
+                    video=video_message.video.file_id,
+                    caption=caption_text,
+                    reply_markup=keyboard,
+                    parse_mode='Markdown',
+                    supports_streaming=True
+                )
+                return True
+        except Exception as e:
+            logger.warning(f"Video post failed: {e}")
         
-        if video_message and video_message.video:
-            methods_to_try.append(('video', video_message.video.file_id))
-        
-        methods_to_try.append(('text', None))
-        
-        for method_type, file_id in methods_to_try:
-            try:
-                if method_type == 'photo':
-                    bot.send_photo(
-                        chat_id=CHANNEL_ID,
-                        photo=file_id,
-                        caption=caption_text,
-                        reply_markup=keyboard,
-                        parse_mode='Markdown'
-                    )
-                    return True
-                elif method_type == 'video':
-                    bot.send_video(
-                        chat_id=CHANNEL_ID,
-                        video=file_id,
-                        caption=caption_text,
-                        reply_markup=keyboard,
-                        parse_mode='Markdown',
-                        supports_streaming=True
-                    )
-                    return True
-                elif method_type == 'text':
-                    bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=caption_text,
-                        reply_markup=keyboard,
-                        parse_mode='Markdown'
-                    )
-                    return True
-            except:
-                continue
-        
-        return False
+        try:
+            bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=caption_text,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Text post also failed: {e}")
+            return False
+            
     except Exception as e:
+        logger.error(f"Post to channel error: {e}")
         return False
 
 @bot.message_handler(content_types=['video'])
@@ -442,14 +440,11 @@ def handle_video_upload(message):
     file_id = message.video.file_id
     response = (
         f"✅ Video ready!\n\n"
-        f"To save:\n"
+        f"Optional:\n"
         f"1. Set thumbnail: /thumb [number]\n"
-        f"2. Set caption: /caption [number] [your text]\n"
-        f"3. Reply to this video: /savevideo [number]\n\n"
-        f"Example:\n"
-        f"/thumb 1\n"
-        f"/caption 1 Amazing new video!\n"
-        f"Then reply: /savevideo 1"
+        f"2. Set caption: /caption [number] [text]\n\n"
+        f"Then reply to this video with:\n"
+        f"/savevideo [number]"
     )
     bot.reply_to(message, response)
 
@@ -494,10 +489,15 @@ def save_video_command(message):
         if has_thumbnail:
             response += "✅ Custom thumbnail\n"
         if has_caption:
-            response += f"✅ Custom caption: {video_database[video_id]['custom_caption'][:50]}...\n"
+            response += f"✅ Custom caption\n"
         
-        response += f"Channel: {'✅ Posted' if channel_posted else '❌ Failed'}\n\n"
+        response += f"Channel post: {'✅ Successful' if channel_posted else '❌ Failed'}\n\n"
         response += f"Link: {WEBSITE_BASE_URL}/?video={video_num}"
+        
+        if not channel_posted:
+            response += f"\n\n❌ Channel post failed. Check:\n"
+            response += f"1. Bot is admin in channel\n"
+            response += f"2. Test with /testchannel"
         
         bot.reply_to(message, response)
         
@@ -616,5 +616,5 @@ def home():
 
 if __name__ == '__main__':
     logger.info(f"🤖 Bot started for channel: {CHANNEL_ID}")
-    logger.info(f"📊 Videos in database: {len(video_database)}")
+    logger.info(f"📊 Videos: {len(video_database)}")
     app.run(host='0.0.0.0', port=5000)
