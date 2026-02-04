@@ -20,16 +20,13 @@ BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
 
-# ===== IMPORTANT: YOU NEED TO GET THE ACTUAL CHANNEL ID =====
-# Method 1: Use the invite link directly
-CHANNEL_INVITE_LINK = "https://t.me/+eX8PcWeteMM4MjJl"
+# ===== UPDATED CHANNEL INFORMATION =====
+CHANNEL_INVITE_LINK = "https://t.me/+NEW_LINK_HERE"  # Replace with your new private channel link
 
-# Method 2: Get numeric ID (recommended)
-# 1. Add bot as admin to channel
-# 2. Send any message in channel
-# 3. Forward that message to @userinfobot
-# 4. Get numeric ID like: -1001234567890
-CHANNEL_ID = None  # Will be auto-detected
+# ===== YOUR NEW CHANNEL ID =====
+# Your channel ID: 1003030466566
+# Add -100 prefix to make it: -1003030466566
+CHANNEL_ID = -1003030466566  # Correct format for private channels
 
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
 
@@ -40,44 +37,35 @@ admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 app_start_time = time.time()
 video_database = {}
 sent_videos = {}
-detected_channel_id = None
+detected_channel_id = CHANNEL_ID  # Start with your known channel ID
 
 def detect_channel_id():
     global detected_channel_id
     try:
         logger.info("🔄 Detecting channel ID...")
         
-        # Try to join via invite link first
+        # First try the manually set channel ID
+        if CHANNEL_ID:
+            try:
+                chat = bot.get_chat(CHANNEL_ID)
+                detected_channel_id = chat.id
+                logger.info(f"✅ Using manually set channel ID: {detected_channel_id}")
+                logger.info(f"✅ Channel title: {chat.title}")
+                return detected_channel_id
+            except Exception as e:
+                logger.warning(f"❌ Manual channel ID failed: {e}")
+        
+        # Try alternative methods if manual ID fails
         try:
-            chat = bot.get_chat(CHANNEL_INVITE_LINK)
-            detected_channel_id = chat.id
-            logger.info(f"✅ Detected channel ID via invite link: {detected_channel_id}")
-            logger.info(f"✅ Channel title: {chat.title}")
-            return detected_channel_id
+            # Try getting the channel by invite link
+            if CHANNEL_INVITE_LINK:
+                chat = bot.get_chat(CHANNEL_INVITE_LINK)
+                detected_channel_id = chat.id
+                logger.info(f"✅ Detected channel ID via invite link: {detected_channel_id}")
+                logger.info(f"✅ Channel title: {chat.title}")
+                return detected_channel_id
         except:
             pass
-        
-        # If you've manually set CHANNEL_ID, use it
-        if CHANNEL_ID:
-            detected_channel_id = CHANNEL_ID
-            logger.info(f"✅ Using manually set channel ID: {detected_channel_id}")
-            return detected_channel_id
-        
-        # Try common formats
-        test_ids = [
-            "@eX8PcWeteMM4MjJl",  # From the invite link
-            -1002264208544,        # Your previous ID
-        ]
-        
-        for test_id in test_ids:
-            try:
-                chat = bot.get_chat(test_id)
-                detected_channel_id = chat.id
-                logger.info(f"✅ Found channel via test ID {test_id}: {detected_channel_id}")
-                logger.info(f"✅ Channel: {chat.title}")
-                return detected_channel_id
-            except:
-                continue
         
         logger.error("❌ Could not detect channel ID. Bot needs to be added to channel first.")
         return None
@@ -100,7 +88,8 @@ def get_channel_info():
             'title': chat.title,
             'type': chat.type,
             'id': chat.id,
-            'username': getattr(chat, 'username', 'N/A')
+            'username': getattr(chat, 'username', 'N/A'),
+            'invite_link': CHANNEL_INVITE_LINK
         }
     except Exception as e:
         return {'success': False, 'error': str(e)}
@@ -117,6 +106,7 @@ def health_check():
             "timestamp": datetime.now().isoformat(),
             "videos": len(video_database),
             "channel_detected": bool(detected_channel_id),
+            "channel_info": channel_info if channel_info['success'] else None,
             "channel_error": channel_info.get('error') if not channel_info['success'] else None,
             "uptime_seconds": int(time.time() - app_start_time)
         }
@@ -315,8 +305,9 @@ def find_channel_command(message):
                     f"✅ Channel Found!\n\n"
                     f"Title: {info['title']}\n"
                     f"ID: {info['id']}\n"
-                    f"Type: {info['type']}\n\n"
-                    f"Invite link: {CHANNEL_INVITE_LINK}\n\n"
+                    f"Type: {info['type']}\n"
+                    f"Username: {info['username']}\n\n"
+                    f"Invite link: {info['invite_link']}\n\n"
                     f"Now test with: /testchannel"
                 )
             else:
@@ -324,11 +315,14 @@ def find_channel_command(message):
         else:
             response = (
                 f"❌ Channel not found!\n\n"
+                f"Current channel ID: {CHANNEL_ID}\n\n"
                 f"Steps to fix:\n"
-                f"1. Add @{bot.get_me().username} to your channel as ADMIN\n"
-                f"2. Use this invite link: {CHANNEL_INVITE_LINK}\n"
-                f"3. Or get numeric ID by forwarding a channel message to @userinfobot\n"
-                f"4. Then run /findchannel again"
+                f"1. Add @{bot.get_me().username} to your private channel as ADMIN\n"
+                f"2. Make sure bot has permission to:\n"
+                f"   • Send Messages\n"
+                f"   • Send Media\n"
+                f"   • Add Web Previews\n"
+                f"3. Use /testchannel to verify"
             )
         
         bot.reply_to(message, response)
@@ -353,33 +347,50 @@ def test_channel_post(message):
         
         test_msg = bot.send_message(
             detected_channel_id,
-            "✅ **Bot Test Successful!**\n\nThis is a test message from your video bot.",
+            "✅ **Bot Test Successful!**\n\nThis is a test message from your video bot.\n\nChannel ID: `{}`".format(detected_channel_id),
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
         
+        # Also test sending a photo
+        try:
+            photo_msg = bot.send_photo(
+                detected_channel_id,
+                "https://via.placeholder.com/400x300/0088cc/ffffff?text=Test+Thumbnail",
+                caption="✅ **Photo Test**\n\nIf you see this, thumbnails will work!",
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+        except Exception as photo_error:
+            logger.warning(f"Photo test failed: {photo_error}")
+        
         info = get_channel_info()
         channel_name = info.get('title', 'Unknown') if info['success'] else 'Unknown'
         
-        bot.reply_to(message, f"✅ Test message sent to: {channel_name}\n\nNow you can upload videos!")
+        bot.reply_to(message, f"✅ Test messages sent to: {channel_name}\n\nNow you can upload videos!")
     except Exception as e:
         error_msg = str(e)
         if "chat not found" in error_msg.lower():
             response = (
                 f"❌ **CHANNEL NOT FOUND**\n\n"
-                f"Current channel ID: {detected_channel_id}\n\n"
+                f"Current channel ID: {detected_channel_id}\n"
+                f"Expected format: -1003030466566\n\n"
                 f"**To fix:**\n"
                 f"1. Make sure bot is added to channel\n"
-                f"2. Bot must be ADMIN\n"
-                f"3. Use /findchannel to detect channel\n"
-                f"4. Or get numeric ID from @userinfobot"
+                f"2. Bot must be ADMIN with posting rights\n"
+                f"3. Channel must be private but bot can access\n"
+                f"4. Use /setchannel to update ID if needed"
             )
         elif "not enough rights" in error_msg.lower():
             response = (
                 f"❌ **BOT NEEDS ADMIN RIGHTS**\n\n"
-                f"Add @{bot.get_me().username} as ADMIN to:\n"
-                f"{CHANNEL_INVITE_LINK}\n\n"
-                f"Grant ALL permissions."
+                f"Add @{bot.get_me().username} as ADMIN to your private channel.\n\n"
+                f"Required permissions:\n"
+                f"• Post Messages ✓\n"
+                f"• Edit Messages ✓\n"
+                f"• Delete Messages ✓\n"
+                f"• Send Media ✓\n"
+                f"• Add Web Previews ✓"
             )
         else:
             response = f"❌ Error: {error_msg[:200]}"
@@ -394,15 +405,21 @@ def set_channel_command(message):
     try:
         parts = message.text.split()
         if len(parts) != 2:
-            bot.reply_to(message, "Usage: /setchannel [channel_id]\nExample: /setchannel -1001234567890")
+            bot.reply_to(message, "Usage: /setchannel [channel_id]\nExample: /setchannel -1003030466566")
             return
         
         new_channel_id = parts[1]
         
         try:
-            # Try numeric ID
+            # Convert to int if it's numeric
             if new_channel_id.startswith('-100'):
                 new_channel_id = int(new_channel_id)
+            elif new_channel_id.isdigit():
+                # If user enters 1003030466566, convert to -1003030466566
+                if new_channel_id.startswith('100'):
+                    new_channel_id = int('-100' + new_channel_id[3:])
+                else:
+                    new_channel_id = int(new_channel_id)
             
             # Test the channel
             chat = bot.get_chat(new_channel_id)
@@ -414,13 +431,14 @@ def set_channel_command(message):
                 f"✅ Channel set successfully!\n\n"
                 f"Title: {chat.title}\n"
                 f"ID: {chat.id}\n"
-                f"Type: {chat.type}\n\n"
+                f"Type: {chat.type}\n"
+                f"Username: {getattr(chat, 'username', 'Private channel')}\n\n"
                 f"Test with: /testchannel"
             )
             
             bot.reply_to(message, response)
         except ValueError:
-            bot.reply_to(message, "❌ Invalid channel ID format. Use numeric ID like -1001234567890")
+            bot.reply_to(message, "❌ Invalid channel ID format. Use numeric ID like -1003030466566")
         except Exception as e:
             bot.reply_to(message, f"❌ Invalid channel ID: {str(e)[:100]}")
     except Exception as e:
@@ -434,6 +452,7 @@ def bot_status_command(message):
     try:
         total_videos = len(video_database)
         videos_with_file = sum(1 for v in video_database.values() if v.get('file_id'))
+        videos_with_thumb = sum(1 for v in video_database.values() if v.get('thumbnail_id'))
         uptime_seconds = int(time.time() - app_start_time)
         uptime_str = f"{uptime_seconds // 3600}h {(uptime_seconds % 3600) // 60}m"
         
@@ -446,8 +465,9 @@ def bot_status_command(message):
         response = (
             f"🤖 Bot Status\n\n"
             f"📊 Database:\n"
-            f"Videos: {total_videos}\n"
-            f"Ready: {videos_with_file}\n\n"
+            f"Total Videos: {total_videos}\n"
+            f"With Files: {videos_with_file}\n"
+            f"With Thumbs: {videos_with_thumb}\n\n"
             f"📢 Channel:\n"
             f"{channel_status}\n"
             f"ID: {detected_channel_id or 'Not set'}\n\n"
@@ -543,23 +563,27 @@ def post_to_channel(video_num, video_message=None):
         
         caption_text += f"\n\nClick the button below to watch 👇"
         
+        # First try to send photo with thumbnail
         try:
             if video_id in video_database and 'thumbnail_id' in video_database[video_id]:
-                bot.send_photo(
+                photo_msg = bot.send_photo(
                     chat_id=detected_channel_id,
                     photo=video_database[video_id]['thumbnail_id'],
                     caption=caption_text,
                     reply_markup=keyboard,
                     parse_mode='Markdown'
                 )
-                logger.info(f"✅ Posted photo to channel: Video {video_num}")
+                logger.info(f"✅ Posted thumbnail to channel: Video {video_num}")
                 return True
+            else:
+                logger.info(f"⚠️ No thumbnail found for Video {video_num}")
         except Exception as e:
-            logger.warning(f"Photo post failed: {e}")
+            logger.error(f"❌ Photo post failed for Video {video_num}: {e}")
         
+        # If photo fails, try video
         try:
             if video_message and video_message.video:
-                bot.send_video(
+                video_msg = bot.send_video(
                     chat_id=detected_channel_id,
                     video=video_message.video.file_id,
                     caption=caption_text,
@@ -570,10 +594,11 @@ def post_to_channel(video_num, video_message=None):
                 logger.info(f"✅ Posted video to channel: Video {video_num}")
                 return True
         except Exception as e:
-            logger.warning(f"Video post failed: {e}")
+            logger.error(f"❌ Video post failed for Video {video_num}: {e}")
         
+        # Last resort: text message
         try:
-            bot.send_message(
+            text_msg = bot.send_message(
                 chat_id=detected_channel_id,
                 text=caption_text,
                 reply_markup=keyboard,
@@ -582,11 +607,11 @@ def post_to_channel(video_num, video_message=None):
             logger.info(f"✅ Posted text to channel: Video {video_num}")
             return True
         except Exception as e:
-            logger.error(f"All posting methods failed: {e}")
+            logger.error(f"❌ Text post failed for Video {video_num}: {e}")
             return False
             
     except Exception as e:
-        logger.error(f"Post to channel error: {e}")
+        logger.error(f"❌ Post to channel error for Video {video_num}: {e}")
         return False
 
 @bot.message_handler(content_types=['video'])
@@ -597,14 +622,15 @@ def handle_video_upload(message):
     
     file_id = message.video.file_id
     response = (
-        f"✅ Video ready!\n\n"
+        f"✅ Video received!\n\n"
+        f"File ID: {file_id[:20]}...\n\n"
         f"To save:\n"
-        f"1. (Optional) Set thumbnail: /thumb [number]\n"
+        f"1. (Optional) Set thumbnail: Send photo with caption '/thumb [number]'\n"
         f"2. (Optional) Set caption: /caption [number] [text]\n"
         f"3. Reply to this video: /savevideo [number]\n\n"
         f"Example:\n"
         f"/caption 1 Amazing video!\n"
-        f"Then reply: /savevideo 1"
+        f"Then reply to video: /savevideo 1"
     )
     bot.reply_to(message, response)
 
@@ -640,26 +666,31 @@ def save_video_command(message):
         
         save_database()
         
+        # Try to post to channel
         channel_posted = post_to_channel(video_num, message.reply_to_message)
         
+        # Generate response
         has_thumbnail = 'thumbnail_id' in video_database[video_id]
         has_caption = 'custom_caption' in video_database[video_id]
         
         response = f"✅ Video {video_num} saved!\n"
         if has_thumbnail:
-            response += "✅ Custom thumbnail\n"
+            response += "✅ Custom thumbnail set\n"
         if has_caption:
-            response += f"✅ Custom caption\n"
+            response += f"✅ Custom caption set\n"
         
         response += f"Channel post: {'✅ Successful' if channel_posted else '❌ Failed'}\n\n"
         response += f"Link: {WEBSITE_BASE_URL}/?video={video_num}"
         
         if not channel_posted:
             response += f"\n\n❌ Channel post failed!\n"
+            response += f"Common issues:\n"
+            response += f"1. Bot not admin in channel\n"
+            response += f"2. Channel ID incorrect\n"
+            response += f"3. Bot doesn't have posting rights\n\n"
             response += f"Fix with:\n"
-            response += f"1. /findchannel - Detect channel\n"
-            response += f"2. /testchannel - Test posting\n"
-            response += f"3. Make sure bot is admin in channel"
+            response += f"/findchannel - Check channel status\n"
+            response += f"/testchannel - Test posting ability"
         
         bot.reply_to(message, response)
         
@@ -768,18 +799,21 @@ def setup_webhooks():
     return jsonify({
         "message": "Webhooks configured!",
         "videos_in_db": len(video_database),
-        "channel_detected": bool(detected_channel_id)
+        "channel_detected": bool(detected_channel_id),
+        "channel_id": detected_channel_id
     })
 
 @app.route('/')
 def home():
     uptime = int(time.time() - app_start_time)
     uptime_str = f"{uptime // 3600}h {(uptime % 3600) // 60}m"
-    channel_detected = "✅" if detected_channel_id else "❌"
-    return f"✅ Video Bot | Channel: {channel_detected} | Uptime: {uptime_str}"
+    channel_info = get_channel_info()
+    channel_status = "✅" if channel_info['success'] else "❌"
+    return f"✅ Video Bot | Channel: {channel_status} | ID: {detected_channel_id} | Uptime: {uptime_str}"
 
 if __name__ == '__main__':
     logger.info(f"🤖 Bot starting...")
+    logger.info(f"📢 Channel ID: {CHANNEL_ID}")
     logger.info(f"📢 Channel invite: {CHANNEL_INVITE_LINK}")
     
     detect_channel_id()
