@@ -19,7 +19,18 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
-CHANNEL_ID = "-1002264208544"
+
+# ===== IMPORTANT: YOU NEED TO GET THE ACTUAL CHANNEL ID =====
+# Method 1: Use the invite link directly
+CHANNEL_INVITE_LINK = "https://t.me/+eX8PcWeteMM4MjJl"
+
+# Method 2: Get numeric ID (recommended)
+# 1. Add bot as admin to channel
+# 2. Send any message in channel
+# 3. Forward that message to @userinfobot
+# 4. Get numeric ID like: -1001234567890
+CHANNEL_ID = None  # Will be auto-detected
+
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
 
 app = Flask(__name__)
@@ -29,15 +40,67 @@ admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 app_start_time = time.time()
 video_database = {}
 sent_videos = {}
+detected_channel_id = None
+
+def detect_channel_id():
+    global detected_channel_id
+    try:
+        logger.info("🔄 Detecting channel ID...")
+        
+        # Try to join via invite link first
+        try:
+            chat = bot.get_chat(CHANNEL_INVITE_LINK)
+            detected_channel_id = chat.id
+            logger.info(f"✅ Detected channel ID via invite link: {detected_channel_id}")
+            logger.info(f"✅ Channel title: {chat.title}")
+            return detected_channel_id
+        except:
+            pass
+        
+        # If you've manually set CHANNEL_ID, use it
+        if CHANNEL_ID:
+            detected_channel_id = CHANNEL_ID
+            logger.info(f"✅ Using manually set channel ID: {detected_channel_id}")
+            return detected_channel_id
+        
+        # Try common formats
+        test_ids = [
+            "@eX8PcWeteMM4MjJl",  # From the invite link
+            -1002264208544,        # Your previous ID
+        ]
+        
+        for test_id in test_ids:
+            try:
+                chat = bot.get_chat(test_id)
+                detected_channel_id = chat.id
+                logger.info(f"✅ Found channel via test ID {test_id}: {detected_channel_id}")
+                logger.info(f"✅ Channel: {chat.title}")
+                return detected_channel_id
+            except:
+                continue
+        
+        logger.error("❌ Could not detect channel ID. Bot needs to be added to channel first.")
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ Channel detection error: {e}")
+        return None
 
 def get_channel_info():
+    global detected_channel_id
     try:
-        chat = bot.get_chat(CHANNEL_ID)
+        if not detected_channel_id:
+            detected_channel_id = detect_channel_id()
+            if not detected_channel_id:
+                return {'success': False, 'error': 'Channel not detected'}
+        
+        chat = bot.get_chat(detected_channel_id)
         return {
             'success': True,
             'title': chat.title,
             'type': chat.type,
-            'id': chat.id
+            'id': chat.id,
+            'username': getattr(chat, 'username', 'N/A')
         }
     except Exception as e:
         return {'success': False, 'error': str(e)}
@@ -48,15 +111,13 @@ def health_check():
     try:
         mongo_status = "connected" if mongo_client is not None else "disconnected"
         channel_info = get_channel_info()
-        channel_status = "✅ Connected" if channel_info['success'] else "❌ Error"
         
         response = {
             "status": "healthy",
-            "service": "telegram-video-bot",
             "timestamp": datetime.now().isoformat(),
             "videos": len(video_database),
-            "mongodb": mongo_status,
-            "channel": channel_status,
+            "channel_detected": bool(detected_channel_id),
+            "channel_error": channel_info.get('error') if not channel_info['success'] else None,
             "uptime_seconds": int(time.time() - app_start_time)
         }
         return jsonify(response), 200
@@ -240,17 +301,36 @@ auto_delete_thread.start()
 load_database()
 load_sent_videos()
 
-@bot.message_handler(commands=['channelinfo'])
-def channel_info_command(message):
+@bot.message_handler(commands=['findchannel'])
+def find_channel_command(message):
     if message.from_user.id != YOUR_TELEGRAM_ID:
         return
     
     try:
-        info = get_channel_info()
-        if info['success']:
-            response = f"✅ Channel: {info['title']}\nID: {info['id']}"
+        detected_channel_id = detect_channel_id()
+        if detected_channel_id:
+            info = get_channel_info()
+            if info['success']:
+                response = (
+                    f"✅ Channel Found!\n\n"
+                    f"Title: {info['title']}\n"
+                    f"ID: {info['id']}\n"
+                    f"Type: {info['type']}\n\n"
+                    f"Invite link: {CHANNEL_INVITE_LINK}\n\n"
+                    f"Now test with: /testchannel"
+                )
+            else:
+                response = f"✅ Channel ID detected: {detected_channel_id}\nBut error: {info.get('error')}"
         else:
-            response = f"❌ Error: {info.get('error')}"
+            response = (
+                f"❌ Channel not found!\n\n"
+                f"Steps to fix:\n"
+                f"1. Add @{bot.get_me().username} to your channel as ADMIN\n"
+                f"2. Use this invite link: {CHANNEL_INVITE_LINK}\n"
+                f"3. Or get numeric ID by forwarding a channel message to @userinfobot\n"
+                f"4. Then run /findchannel again"
+            )
+        
         bot.reply_to(message, response)
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
@@ -261,42 +341,90 @@ def test_channel_post(message):
         return
     
     try:
+        if not detected_channel_id:
+            detect_channel_id()
+        
+        if not detected_channel_id:
+            bot.reply_to(message, "❌ Channel not detected. Use /findchannel first")
+            return
+        
         keyboard = telebot.types.InlineKeyboardMarkup()
-        keyboard.add(telebot.types.InlineKeyboardButton("🎬 Test", url=WEBSITE_BASE_URL))
+        keyboard.add(telebot.types.InlineKeyboardButton("🎬 Test Button", url=WEBSITE_BASE_URL))
         
         test_msg = bot.send_message(
-            CHANNEL_ID,
-            "✅ Bot test message with button",
+            detected_channel_id,
+            "✅ **Bot Test Successful!**\n\nThis is a test message from your video bot.",
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
-        bot.reply_to(message, "✅ Channel test successful! Check your channel.")
+        
+        info = get_channel_info()
+        channel_name = info.get('title', 'Unknown') if info['success'] else 'Unknown'
+        
+        bot.reply_to(message, f"✅ Test message sent to: {channel_name}\n\nNow you can upload videos!")
     except Exception as e:
-        bot.reply_to(message, f"❌ Channel error: {str(e)[:200]}")
+        error_msg = str(e)
+        if "chat not found" in error_msg.lower():
+            response = (
+                f"❌ **CHANNEL NOT FOUND**\n\n"
+                f"Current channel ID: {detected_channel_id}\n\n"
+                f"**To fix:**\n"
+                f"1. Make sure bot is added to channel\n"
+                f"2. Bot must be ADMIN\n"
+                f"3. Use /findchannel to detect channel\n"
+                f"4. Or get numeric ID from @userinfobot"
+            )
+        elif "not enough rights" in error_msg.lower():
+            response = (
+                f"❌ **BOT NEEDS ADMIN RIGHTS**\n\n"
+                f"Add @{bot.get_me().username} as ADMIN to:\n"
+                f"{CHANNEL_INVITE_LINK}\n\n"
+                f"Grant ALL permissions."
+            )
+        else:
+            response = f"❌ Error: {error_msg[:200]}"
+        
+        bot.reply_to(message, response)
 
-@bot.message_handler(commands=['mongotest'])
-def test_mongodb(message):
+@bot.message_handler(commands=['setchannel'])
+def set_channel_command(message):
     if message.from_user.id != YOUR_TELEGRAM_ID:
         return
     
     try:
-        mongodb_uri = os.getenv('MONGODB_URI', 'Not set')
-        test_status = "Not tested"
-        if mongodb_uri and mongodb_uri != 'Not set':
-            try:
-                test_client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-                test_client.admin.command('ping')
-                test_status = "✅ CONNECTED"
-                test_client.close()
-            except Exception as e:
-                test_status = f"❌ FAILED: {str(e)[:150]}"
-        else:
-            test_status = "❌ URI NOT SET"
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "Usage: /setchannel [channel_id]\nExample: /setchannel -1001234567890")
+            return
         
-        response = f"MongoDB: {test_status}"
-        bot.reply_to(message, response)
+        new_channel_id = parts[1]
+        
+        try:
+            # Try numeric ID
+            if new_channel_id.startswith('-100'):
+                new_channel_id = int(new_channel_id)
+            
+            # Test the channel
+            chat = bot.get_chat(new_channel_id)
+            
+            global detected_channel_id
+            detected_channel_id = chat.id
+            
+            response = (
+                f"✅ Channel set successfully!\n\n"
+                f"Title: {chat.title}\n"
+                f"ID: {chat.id}\n"
+                f"Type: {chat.type}\n\n"
+                f"Test with: /testchannel"
+            )
+            
+            bot.reply_to(message, response)
+        except ValueError:
+            bot.reply_to(message, "❌ Invalid channel ID format. Use numeric ID like -1001234567890")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Invalid channel ID: {str(e)[:100]}")
     except Exception as e:
-        bot.reply_to(message, f"Test error: {str(e)[:100]}")
+        bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
 
 @bot.message_handler(commands=['status'])
 def bot_status_command(message):
@@ -309,7 +437,27 @@ def bot_status_command(message):
         uptime_seconds = int(time.time() - app_start_time)
         uptime_str = f"{uptime_seconds // 3600}h {(uptime_seconds % 3600) // 60}m"
         
-        response = f"Videos: {total_videos}\nReady: {videos_with_file}\nUptime: {uptime_str}"
+        channel_info = get_channel_info()
+        if channel_info['success']:
+            channel_status = f"✅ {channel_info['title']}"
+        else:
+            channel_status = f"❌ {channel_info.get('error', 'Not detected')}"
+        
+        response = (
+            f"🤖 Bot Status\n\n"
+            f"📊 Database:\n"
+            f"Videos: {total_videos}\n"
+            f"Ready: {videos_with_file}\n\n"
+            f"📢 Channel:\n"
+            f"{channel_status}\n"
+            f"ID: {detected_channel_id or 'Not set'}\n\n"
+            f"⏱️ Uptime: {uptime_str}\n\n"
+            f"🔧 Commands:\n"
+            f"/findchannel - Detect channel\n"
+            f"/testchannel - Test posting\n"
+            f"/setchannel - Manual set ID"
+        )
+        
         bot.reply_to(message, response)
     except Exception as e:
         bot.reply_to(message, "✅ Bot is running")
@@ -373,7 +521,14 @@ def set_caption_command(message):
         bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
 
 def post_to_channel(video_num, video_message=None):
+    global detected_channel_id
     try:
+        if not detected_channel_id:
+            detect_channel_id()
+            if not detected_channel_id:
+                logger.error("No channel ID detected for posting")
+                return False
+        
         website_url = f"{WEBSITE_BASE_URL}/?video={video_num}"
         video_id = f"video{video_num}"
         
@@ -391,12 +546,13 @@ def post_to_channel(video_num, video_message=None):
         try:
             if video_id in video_database and 'thumbnail_id' in video_database[video_id]:
                 bot.send_photo(
-                    chat_id=CHANNEL_ID,
+                    chat_id=detected_channel_id,
                     photo=video_database[video_id]['thumbnail_id'],
                     caption=caption_text,
                     reply_markup=keyboard,
                     parse_mode='Markdown'
                 )
+                logger.info(f"✅ Posted photo to channel: Video {video_num}")
                 return True
         except Exception as e:
             logger.warning(f"Photo post failed: {e}")
@@ -404,27 +560,29 @@ def post_to_channel(video_num, video_message=None):
         try:
             if video_message and video_message.video:
                 bot.send_video(
-                    chat_id=CHANNEL_ID,
+                    chat_id=detected_channel_id,
                     video=video_message.video.file_id,
                     caption=caption_text,
                     reply_markup=keyboard,
                     parse_mode='Markdown',
                     supports_streaming=True
                 )
+                logger.info(f"✅ Posted video to channel: Video {video_num}")
                 return True
         except Exception as e:
             logger.warning(f"Video post failed: {e}")
         
         try:
             bot.send_message(
-                chat_id=CHANNEL_ID,
+                chat_id=detected_channel_id,
                 text=caption_text,
                 reply_markup=keyboard,
                 parse_mode='Markdown'
             )
+            logger.info(f"✅ Posted text to channel: Video {video_num}")
             return True
         except Exception as e:
-            logger.error(f"Text post also failed: {e}")
+            logger.error(f"All posting methods failed: {e}")
             return False
             
     except Exception as e:
@@ -440,11 +598,13 @@ def handle_video_upload(message):
     file_id = message.video.file_id
     response = (
         f"✅ Video ready!\n\n"
-        f"Optional:\n"
-        f"1. Set thumbnail: /thumb [number]\n"
-        f"2. Set caption: /caption [number] [text]\n\n"
-        f"Then reply to this video with:\n"
-        f"/savevideo [number]"
+        f"To save:\n"
+        f"1. (Optional) Set thumbnail: /thumb [number]\n"
+        f"2. (Optional) Set caption: /caption [number] [text]\n"
+        f"3. Reply to this video: /savevideo [number]\n\n"
+        f"Example:\n"
+        f"/caption 1 Amazing video!\n"
+        f"Then reply: /savevideo 1"
     )
     bot.reply_to(message, response)
 
@@ -495,9 +655,11 @@ def save_video_command(message):
         response += f"Link: {WEBSITE_BASE_URL}/?video={video_num}"
         
         if not channel_posted:
-            response += f"\n\n❌ Channel post failed. Check:\n"
-            response += f"1. Bot is admin in channel\n"
-            response += f"2. Test with /testchannel"
+            response += f"\n\n❌ Channel post failed!\n"
+            response += f"Fix with:\n"
+            response += f"1. /findchannel - Detect channel\n"
+            response += f"2. /testchannel - Test posting\n"
+            response += f"3. Make sure bot is admin in channel"
         
         bot.reply_to(message, response)
         
@@ -605,16 +767,32 @@ def setup_webhooks():
     set_admin_webhook()
     return jsonify({
         "message": "Webhooks configured!",
-        "videos_in_db": len(video_database)
+        "videos_in_db": len(video_database),
+        "channel_detected": bool(detected_channel_id)
     })
 
 @app.route('/')
 def home():
     uptime = int(time.time() - app_start_time)
     uptime_str = f"{uptime // 3600}h {(uptime % 3600) // 60}m"
-    return f"✅ Video Bot running! | Uptime: {uptime_str}"
+    channel_detected = "✅" if detected_channel_id else "❌"
+    return f"✅ Video Bot | Channel: {channel_detected} | Uptime: {uptime_str}"
 
 if __name__ == '__main__':
-    logger.info(f"🤖 Bot started for channel: {CHANNEL_ID}")
-    logger.info(f"📊 Videos: {len(video_database)}")
+    logger.info(f"🤖 Bot starting...")
+    logger.info(f"📢 Channel invite: {CHANNEL_INVITE_LINK}")
+    
+    detect_channel_id()
+    
+    if detected_channel_id:
+        info = get_channel_info()
+        if info['success']:
+            logger.info(f"✅ Channel detected: {info['title']} (ID: {detected_channel_id})")
+        else:
+            logger.warning(f"⚠️ Channel ID found but error: {info.get('error')}")
+    else:
+        logger.warning("⚠️ Channel not detected. Bot will try to detect when needed.")
+    
+    logger.info(f"📊 Videos in database: {len(video_database)}")
+    
     app.run(host='0.0.0.0', port=5000)
