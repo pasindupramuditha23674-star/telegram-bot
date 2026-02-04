@@ -20,12 +20,8 @@ BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
 
-# ===== UPDATED CHANNEL INFORMATION =====
+# ===== CHANNEL INFORMATION =====
 CHANNEL_INVITE_LINK = "https://t.me/+NEW_LINK_HERE"  # Replace with your new private channel link
-
-# ===== YOUR NEW CHANNEL ID =====
-# Your channel ID: 1003030466566
-# Add -100 prefix to make it: -1003030466566
 CHANNEL_ID = -1003030466566  # Correct format for private channels
 
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
@@ -37,14 +33,13 @@ admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 app_start_time = time.time()
 video_database = {}
 sent_videos = {}
-detected_channel_id = CHANNEL_ID  # Start with your known channel ID
+detected_channel_id = CHANNEL_ID
 
 def detect_channel_id():
     global detected_channel_id
     try:
         logger.info("🔄 Detecting channel ID...")
         
-        # First try the manually set channel ID
         if CHANNEL_ID:
             try:
                 chat = bot.get_chat(CHANNEL_ID)
@@ -55,9 +50,7 @@ def detect_channel_id():
             except Exception as e:
                 logger.warning(f"❌ Manual channel ID failed: {e}")
         
-        # Try alternative methods if manual ID fails
         try:
-            # Try getting the channel by invite link
             if CHANNEL_INVITE_LINK:
                 chat = bot.get_chat(CHANNEL_INVITE_LINK)
                 detected_channel_id = chat.id
@@ -291,6 +284,116 @@ auto_delete_thread.start()
 load_database()
 load_sent_videos()
 
+# ===== NEW: CUSTOM THUMBNAIL NAME SYSTEM =====
+@bot.message_handler(commands=['thumbname'])
+def set_thumbnail_name_command(message):
+    """Set a custom name for the thumbnail instead of just showing the video number"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            bot.reply_to(message, "Usage: /thumbname [video_number] [custom_thumbnail_name]\n\nExample: /thumbname 1 Movie Trailer\nExample: /thumbname 2 Funny Clip")
+            return
+        
+        video_num = parts[1]
+        custom_name = parts[2]
+        video_id = f"video{video_num}"
+        
+        if video_id not in video_database:
+            bot.reply_to(message, f"❌ Video {video_num} not found. Save the video first with /savevideo")
+            return
+        
+        video_database[video_id]['thumbnail_name'] = custom_name
+        save_database()
+        
+        # Show preview
+        has_thumbnail = 'thumbnail_id' in video_database[video_id]
+        thumbnail_status = "✅ Has custom thumbnail" if has_thumbnail else "❌ No thumbnail set"
+        
+        response = (
+            f"✅ Thumbnail name set!\n\n"
+            f"Video: {video_num}\n"
+            f"Display name: {custom_name}\n"
+            f"Thumbnail: {thumbnail_status}\n\n"
+            f"Users will see '{custom_name}' instead of 'Video {video_num}'"
+        )
+        
+        bot.reply_to(message, response)
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
+
+@bot.message_handler(commands=['listthumbnames'])
+def list_thumbnail_names_command(message):
+    """List all videos with their custom thumbnail names"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        if not video_database:
+            bot.reply_to(message, "❌ No videos in database yet.")
+            return
+        
+        videos_with_names = []
+        videos_without_names = []
+        
+        for video_id, data in video_database.items():
+            video_num = video_id.replace('video', '')
+            if 'thumbnail_name' in data:
+                has_thumb = "✅" if 'thumbnail_id' in data else "❌"
+                videos_with_names.append(f"{has_thumb} Video {video_num}: {data['thumbnail_name']}")
+            else:
+                has_thumb = "✅" if 'thumbnail_id' in data else "❌"
+                videos_without_names.append(f"{has_thumb} Video {video_num}: (No custom name)")
+        
+        response = "📋 **Custom Thumbnail Names**\n\n"
+        
+        if videos_with_names:
+            response += "**With Custom Names:**\n"
+            response += "\n".join(videos_with_names) + "\n\n"
+        
+        if videos_without_names:
+            response += "**Without Custom Names:**\n"
+            response += "\n".join(videos_without_names[:10])  # Limit to first 10
+        
+        if len(videos_without_names) > 10:
+            response += f"\n\n...and {len(videos_without_names) - 10} more"
+        
+        bot.reply_to(message, response)
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
+
+@bot.message_handler(commands=['removethumbname'])
+def remove_thumbnail_name_command(message):
+    """Remove custom thumbnail name for a video"""
+    if message.from_user.id != YOUR_TELEGRAM_ID:
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "Usage: /removethumbname [video_number]\n\nExample: /removethumbname 1")
+            return
+        
+        video_num = parts[1]
+        video_id = f"video{video_num}"
+        
+        if video_id not in video_database:
+            bot.reply_to(message, f"❌ Video {video_num} not found.")
+            return
+        
+        if 'thumbnail_name' not in video_database[video_id]:
+            bot.reply_to(message, f"❌ Video {video_num} doesn't have a custom thumbnail name.")
+            return
+        
+        old_name = video_database[video_id].pop('thumbnail_name')
+        save_database()
+        
+        bot.reply_to(message, f"✅ Removed custom name '{old_name}' from Video {video_num}\n\nUsers will now see 'Video {video_num}'")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
+
 @bot.message_handler(commands=['findchannel'])
 def find_channel_command(message):
     if message.from_user.id != YOUR_TELEGRAM_ID:
@@ -352,18 +455,6 @@ def test_channel_post(message):
             parse_mode='Markdown'
         )
         
-        # Also test sending a photo
-        try:
-            photo_msg = bot.send_photo(
-                detected_channel_id,
-                "https://via.placeholder.com/400x300/0088cc/ffffff?text=Test+Thumbnail",
-                caption="✅ **Photo Test**\n\nIf you see this, thumbnails will work!",
-                reply_markup=keyboard,
-                parse_mode='Markdown'
-            )
-        except Exception as photo_error:
-            logger.warning(f"Photo test failed: {photo_error}")
-        
         info = get_channel_info()
         channel_name = info.get('title', 'Unknown') if info['success'] else 'Unknown'
         
@@ -411,17 +502,14 @@ def set_channel_command(message):
         new_channel_id = parts[1]
         
         try:
-            # Convert to int if it's numeric
             if new_channel_id.startswith('-100'):
                 new_channel_id = int(new_channel_id)
             elif new_channel_id.isdigit():
-                # If user enters 1003030466566, convert to -1003030466566
                 if new_channel_id.startswith('100'):
                     new_channel_id = int('-100' + new_channel_id[3:])
                 else:
                     new_channel_id = int(new_channel_id)
             
-            # Test the channel
             chat = bot.get_chat(new_channel_id)
             
             global detected_channel_id
@@ -453,6 +541,7 @@ def bot_status_command(message):
         total_videos = len(video_database)
         videos_with_file = sum(1 for v in video_database.values() if v.get('file_id'))
         videos_with_thumb = sum(1 for v in video_database.values() if v.get('thumbnail_id'))
+        videos_with_custom_name = sum(1 for v in video_database.values() if v.get('thumbnail_name'))
         uptime_seconds = int(time.time() - app_start_time)
         uptime_str = f"{uptime_seconds // 3600}h {(uptime_seconds % 3600) // 60}m"
         
@@ -467,15 +556,16 @@ def bot_status_command(message):
             f"📊 Database:\n"
             f"Total Videos: {total_videos}\n"
             f"With Files: {videos_with_file}\n"
-            f"With Thumbs: {videos_with_thumb}\n\n"
+            f"With Thumbs: {videos_with_thumb}\n"
+            f"With Custom Names: {videos_with_custom_name}\n\n"
             f"📢 Channel:\n"
             f"{channel_status}\n"
             f"ID: {detected_channel_id or 'Not set'}\n\n"
             f"⏱️ Uptime: {uptime_str}\n\n"
-            f"🔧 Commands:\n"
-            f"/findchannel - Detect channel\n"
-            f"/testchannel - Test posting\n"
-            f"/setchannel - Manual set ID"
+            f"🔧 New Commands:\n"
+            f"/thumbname - Set custom thumbnail name\n"
+            f"/listthumbnames - List all custom names\n"
+            f"/removethumbname - Remove custom name"
         )
         
         bot.reply_to(message, response)
@@ -506,7 +596,11 @@ def handle_photo_upload(message):
                 video_database[video_id]['thumbnail_id'] = photo_id
                 save_database()
                 
-                bot.reply_to(message, f"✅ Thumbnail set for Video {video_num}!")
+                # Check if custom name exists
+                has_custom_name = 'thumbnail_name' in video_database[video_id]
+                name_info = f"\nCustom name: {video_database[video_id]['thumbnail_name']}" if has_custom_name else ""
+                
+                bot.reply_to(message, f"✅ Thumbnail set for Video {video_num}!{name_info}")
         except Exception as e:
             bot.reply_to(message, f"❌ Error: {str(e)}")
 
@@ -555,15 +649,21 @@ def post_to_channel(video_num, video_message=None):
         keyboard = telebot.types.InlineKeyboardMarkup()
         keyboard.add(telebot.types.InlineKeyboardButton("🎬 Watch Now", url=website_url))
         
-        caption_text = ""
+        # Get display name: custom thumbnail name OR video number
+        if video_id in video_database and 'thumbnail_name' in video_database[video_id]:
+            display_name = video_database[video_id]['thumbnail_name']
+        else:
+            display_name = f"Video {video_num}"
+        
+        # Get caption text
         if video_id in video_database and 'custom_caption' in video_database[video_id]:
             caption_text = video_database[video_id]['custom_caption']
         else:
-            caption_text = f"🎥 Video {video_num}"
+            caption_text = f"🎥 {display_name}"
         
         caption_text += f"\n\nClick the button below to watch 👇"
         
-        # First try to send photo with thumbnail
+        # Try to send photo with thumbnail
         try:
             if video_id in video_database and 'thumbnail_id' in video_database[video_id]:
                 photo_msg = bot.send_photo(
@@ -573,12 +673,12 @@ def post_to_channel(video_num, video_message=None):
                     reply_markup=keyboard,
                     parse_mode='Markdown'
                 )
-                logger.info(f"✅ Posted thumbnail to channel: Video {video_num}")
+                logger.info(f"✅ Posted thumbnail to channel: {display_name}")
                 return True
             else:
-                logger.info(f"⚠️ No thumbnail found for Video {video_num}")
+                logger.info(f"⚠️ No thumbnail found for {display_name}")
         except Exception as e:
-            logger.error(f"❌ Photo post failed for Video {video_num}: {e}")
+            logger.error(f"❌ Photo post failed for {display_name}: {e}")
         
         # If photo fails, try video
         try:
@@ -591,10 +691,10 @@ def post_to_channel(video_num, video_message=None):
                     parse_mode='Markdown',
                     supports_streaming=True
                 )
-                logger.info(f"✅ Posted video to channel: Video {video_num}")
+                logger.info(f"✅ Posted video to channel: {display_name}")
                 return True
         except Exception as e:
-            logger.error(f"❌ Video post failed for Video {video_num}: {e}")
+            logger.error(f"❌ Video post failed for {display_name}: {e}")
         
         # Last resort: text message
         try:
@@ -604,14 +704,14 @@ def post_to_channel(video_num, video_message=None):
                 reply_markup=keyboard,
                 parse_mode='Markdown'
             )
-            logger.info(f"✅ Posted text to channel: Video {video_num}")
+            logger.info(f"✅ Posted text to channel: {display_name}")
             return True
         except Exception as e:
-            logger.error(f"❌ Text post failed for Video {video_num}: {e}")
+            logger.error(f"❌ Text post failed for {display_name}: {e}")
             return False
             
     except Exception as e:
-        logger.error(f"❌ Post to channel error for Video {video_num}: {e}")
+        logger.error(f"❌ Post to channel error: {e}")
         return False
 
 @bot.message_handler(content_types=['video'])
@@ -624,13 +724,16 @@ def handle_video_upload(message):
     response = (
         f"✅ Video received!\n\n"
         f"File ID: {file_id[:20]}...\n\n"
-        f"To save:\n"
-        f"1. (Optional) Set thumbnail: Send photo with caption '/thumb [number]'\n"
-        f"2. (Optional) Set caption: /caption [number] [text]\n"
-        f"3. Reply to this video: /savevideo [number]\n\n"
-        f"Example:\n"
-        f"/caption 1 Amazing video!\n"
-        f"Then reply to video: /savevideo 1"
+        f"**Setup Steps:**\n\n"
+        f"1. **Set thumbnail:** Send photo with '/thumb [number]'\n"
+        f"2. **Set thumbnail name (optional):** /thumbname [number] [custom name]\n"
+        f"3. **Set caption (optional):** /caption [number] [text]\n"
+        f"4. **Save video:** Reply with /savevideo [number]\n\n"
+        f"**Example:**\n"
+        f"/thumbname 1 Amazing Movie Trailer\n"
+        f"/caption 1 Watch this amazing trailer!\n"
+        f"Then reply to video: /savevideo 1\n\n"
+        f"**New Feature:** Users will see 'Amazing Movie Trailer' instead of 'Video 1'"
     )
     bot.reply_to(message, response)
 
@@ -669,17 +772,24 @@ def save_video_command(message):
         # Try to post to channel
         channel_posted = post_to_channel(video_num, message.reply_to_message)
         
-        # Generate response
+        # Generate response with custom name if exists
+        display_name = video_database[video_id].get('thumbnail_name', f'Video {video_num}')
+        
         has_thumbnail = 'thumbnail_id' in video_database[video_id]
         has_caption = 'custom_caption' in video_database[video_id]
+        has_custom_name = 'thumbnail_name' in video_database[video_id]
         
-        response = f"✅ Video {video_num} saved!\n"
+        response = f"✅ **{display_name}** saved!\n\n"
+        response += f"Video number: {video_num}\n"
+        
+        if has_custom_name:
+            response += f"Display name: {display_name}\n"
         if has_thumbnail:
-            response += "✅ Custom thumbnail set\n"
+            response += "✅ Custom thumbnail\n"
         if has_caption:
-            response += f"✅ Custom caption set\n"
+            response += "✅ Custom caption\n"
         
-        response += f"Channel post: {'✅ Successful' if channel_posted else '❌ Failed'}\n\n"
+        response += f"\nChannel post: {'✅ Successful' if channel_posted else '❌ Failed'}\n"
         response += f"Link: {WEBSITE_BASE_URL}/?video={video_num}"
         
         if not channel_posted:
@@ -696,6 +806,35 @@ def save_video_command(message):
         
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
+
+def show_video_menu(message):
+    """Show menu with custom thumbnail names if available"""
+    if video_database:
+        keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+        
+        for vid_id in sorted(video_database.keys(), key=lambda x: int(x.replace('video', '') or 0)):
+            num = vid_id.replace('video', '')
+            video_data = video_database[vid_id]
+            
+            # Use custom thumbnail name if available, otherwise use "Video X"
+            if 'thumbnail_name' in video_data:
+                button_text = f"🎬 {video_data['thumbnail_name']}"
+            else:
+                button_text = f"🎬 Video {num}"
+            
+            # Add thumbnail status indicator
+            if 'thumbnail_id' in video_data:
+                button_text = "🖼️ " + button_text
+            
+            keyboard.add(telebot.types.InlineKeyboardButton(button_text, callback_data=f"send_{vid_id}"))
+        
+        # Add help button for admin
+        if message.from_user.id == YOUR_TELEGRAM_ID:
+            keyboard.add(telebot.types.InlineKeyboardButton("📋 List All Names", callback_data="list_names"))
+        
+        bot.reply_to(message, "Select a video to watch:", reply_markup=keyboard)
+    else:
+        bot.reply_to(message, "No videos available yet.")
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -728,16 +867,6 @@ def send_video_to_user(message, video_id):
     except Exception as e:
         bot.reply_to(message, "❌ Failed to send video.")
 
-def show_video_menu(message):
-    if video_database:
-        keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
-        for vid_id in sorted(video_database.keys()):
-            num = vid_id.replace('video', '')
-            keyboard.add(telebot.types.InlineKeyboardButton(f"Video {num}", callback_data=f"send_{vid_id}"))
-        bot.reply_to(message, "Select a video:", reply_markup=keyboard)
-    else:
-        bot.reply_to(message, "No videos available yet.")
-
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     if call.data.startswith('send_'):
@@ -760,9 +889,17 @@ def handle_callback(call):
                     sent_time=datetime.now().isoformat()
                 )
                 
-                bot.answer_callback_query(call.id, "✅ Video sent! (Auto-deletes in 1 hour)")
+                # Show display name in confirmation
+                video_num = video_id.replace('video', '')
+                display_name = video_data.get('thumbnail_name', f'Video {video_num}')
+                bot.answer_callback_query(call.id, f"✅ {display_name} sent! (Auto-deletes in 1 hour)")
             except Exception as e:
                 bot.answer_callback_query(call.id, "❌ Failed to send video")
+    
+    elif call.data == "list_names" and call.from_user.id == YOUR_TELEGRAM_ID:
+        # Show admin the list of custom names
+        list_thumbnail_names_command(call.message)
+        bot.answer_callback_query(call.id)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
