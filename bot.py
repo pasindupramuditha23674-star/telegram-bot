@@ -3,7 +3,7 @@ import json
 import logging
 import threading
 import time
-import requests  # <-- added for self-ping
+import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 import telebot
@@ -22,11 +22,11 @@ ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
 
 # ===== VIDEO CHANNEL (original) =====
-CHANNEL_INVITE_LINK = "https://t.me/+NEW_LINK_HERE"  # Replace with your private channel link
+CHANNEL_INVITE_LINK = "https://t.me/+NEW_LINK_HERE"
 CHANNEL_ID = -1003030466566
 
-# ===== LINK GROUP (new) =====
-LINK_GROUP_ID = -5294206953   # <--- Your group ID
+# ===== LINK CHANNEL (updated) =====
+LINK_GROUP_ID = -1003302471500   # <--- Your new channel ID
 
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
 
@@ -147,7 +147,7 @@ def save_links():
     except Exception:
         pass
 
-# ----- Sent videos (unchanged) -----
+# ----- Sent videos -----
 def load_sent_videos():
     global sent_videos
     try:
@@ -232,22 +232,20 @@ load_database()
 load_links()
 load_sent_videos()
 
-# ========== KEEP ALIVE FUNCTION (self-ping) ==========
+# ========== KEEP ALIVE FUNCTION ==========
 def keep_alive():
-    """Ping the bot's own URL every 10 minutes to prevent Render from sleeping."""
     url = "https://telegram-bot-7-dqqa.onrender.com/"
     while True:
-        time.sleep(600)  # 10 minutes
+        time.sleep(600)
         try:
             response = requests.get(url, timeout=10)
             logger.info(f"Self-ping keep-alive: status {response.status_code}")
         except Exception as e:
             logger.error(f"Self-ping failed: {e}")
 
-# Start the keep-alive thread
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# ========== ORIGINAL VIDEO COMMANDS (abridged but fully functional) ==========
+# ========== ORIGINAL VIDEO COMMANDS ==========
 def detect_channel_id():
     global detected_channel_id
     try:
@@ -493,7 +491,7 @@ def add_link_command(message):
     }
     save_links()
     post_link_to_group(link_num)
-    bot.reply_to(message, f"✅ Link {link_num} saved and posted to group.\nName: {name}\nURL: {url}")
+    bot.reply_to(message, f"✅ Link {link_num} saved and posted to channel.\nName: {name}\nURL: {url}")
 
 @bot.message_handler(commands=['listlinks'])
 def list_links_command(message):
@@ -534,7 +532,6 @@ def post_link_manually(message):
 
 @bot.message_handler(commands=['getlink'])
 def get_link_direct_command(message):
-    """Direct command: /getlink 1 - sends the full link instantly in chat"""
     parts = message.text.split()
     if len(parts) != 2:
         bot.reply_to(message, "Usage: /getlink [number]")
@@ -561,7 +558,7 @@ def post_link_to_group(link_num):
         keyboard.add(telebot.types.InlineKeyboardButton(f"🔗 {data['name']}", url=target_url))
         caption = f"✨ **{data['name']}**\n\nClick the button – link will appear letter by letter in 7 seconds."
         bot.send_message(LINK_GROUP_ID, caption, reply_markup=keyboard, parse_mode='Markdown')
-        logger.info(f"Posted link {link_num} to group {LINK_GROUP_ID}")
+        logger.info(f"Posted link {link_num} to channel {LINK_GROUP_ID}")
         return True
     except Exception as e:
         logger.error(f"Failed to post link: {e}")
