@@ -441,63 +441,38 @@ def show_video_menu(message):
         keyboard.add(telebot.types.InlineKeyboardButton(f"🎬 {name}", callback_data=f"send_{vid}"))
     bot.reply_to(message, "Select a video:", reply_markup=keyboard)
 
+# ========== UPDATED START HANDLER (with deep link for contact) ==========
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    parts = message.text.split()
-    if len(parts) > 1 and parts[1] in video_database:
-        send_video_to_user(message, parts[1])
+    # Split the message to check for deep link payload
+    text_parts = message.text.split()
+    if len(text_parts) > 1 and text_parts[1] == 'contact':
+        # This is a contact request from the channel link
+        bot.reply_to(message,
+                     "📞 **Contact the Administrator**\n\n"
+                     "Please type your message below. It will be forwarded anonymously to the admin.\n"
+                     "The admin can reply directly to you.\n\n"
+                     "**Note:** Only text messages are supported.",
+                     parse_mode='Markdown')
+        # Set user in waiting mode (forward next message)
+        if not hasattr(bot, 'waiting_for_feedback'):
+            bot.waiting_for_feedback = set()
+        bot.waiting_for_feedback.add(message.chat.id)
     else:
+        # Regular start – show video menu
         show_video_menu(message)
 
-def send_video_to_user(message, video_id):
-    try:
-        video_data = video_database[video_id]
-        sent = bot.send_video(message.chat.id, video_data['file_id'], protect_content=True)
-        add_sent_video(message.chat.id, sent.message_id, video_id, datetime.now().isoformat())
-    except Exception as e:
-        bot.reply_to(message, "Failed to send video.")
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callback(call):
-    if call.data.startswith('send_'):
-        video_id = call.data.replace('send_', '')
-        if video_id in video_database:
-            try:
-                sent = bot.send_video(call.from_user.id, video_database[video_id]['file_id'], protect_content=True)
-                add_sent_video(call.from_user.id, sent.message_id, video_id, datetime.now().isoformat())
-                bot.answer_callback_query(call.id, "✅ Video sent!")
-            except Exception:
-                bot.answer_callback_query(call.id, "❌ Failed")
-    elif call.data == "list_names" and call.from_user.id == YOUR_TELEGRAM_ID:
-        list_thumbnail_names_command(call.message)
-        bot.answer_callback_query(call.id)
-
-# ========== ANONYMOUS CONTACT ADMIN (SECOND METHOD) ==========
-# Create a set to track users who are in "ask mode"
-# We'll attach it as an attribute to the bot object for persistence across handlers
+# ========== ANONYMOUS FORWARDING (for any text after contact start) ==========
+# Create a set to track users waiting for feedback
 if not hasattr(bot, 'waiting_for_feedback'):
     bot.waiting_for_feedback = set()
 
-@bot.message_handler(commands=['help', 'contact', 'ask'])
-def ask_admin_command(message):
-    """Initiates the anonymous contact process."""
-    bot.reply_to(message, 
-                 "✏️ **Contact Admin**\n\n"
-                 "Please type your message below. It will be forwarded anonymously to the administrator.\n"
-                 "The admin will see your name and can reply to you directly.\n\n"
-                 "**Note:** Only text messages are supported.", 
-                 parse_mode='Markdown')
-    # Add user to waiting set
-    bot.waiting_for_feedback.add(message.chat.id)
-
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def forward_to_admin(message):
-    """Forward any text message from a user in waiting_for_feedback to the admin."""
+    # Only forward if this user is in waiting mode
     if message.chat.id in bot.waiting_for_feedback:
-        # Remove user from set so future messages are not forwarded
+        # Remove from waiting set after receiving the message
         bot.waiting_for_feedback.discard(message.chat.id)
-        
-        # Prepare the forwarded message for admin
         user = message.from_user
         user_mention = f"[{user.first_name}](tg://user?id={user.id})"
         forward_text = (
@@ -606,6 +581,7 @@ def get_link_direct_command(message):
     name = link_database[link_id]['name']
     bot.reply_to(message, f"🔗 **{name}**\n\n{url}", parse_mode='Markdown', disable_web_page_preview=False)
 
+# ========== UPDATED post_link_to_group (with clickable text link for contact) ==========
 def post_link_to_group(link_num):
     try:
         if LINK_GROUP_ID is None:
@@ -617,7 +593,7 @@ def post_link_to_group(link_num):
         data = link_database[link_id]
         target_url = f"{WEBSITE_BASE_URL}/?link={link_num}"
         
-        # Build the message: bold channel name, optional description, then button
+        # Build the message: bold channel name, optional description, then button and contact link
         channel_name = data['name']
         description = data.get('description', '')
         
@@ -625,8 +601,13 @@ def post_link_to_group(link_num):
         if description:
             caption += f"\n{description}"
         
-        keyboard = telebot.types.InlineKeyboardMarkup()
-        keyboard.add(telebot.types.InlineKeyboardButton("🔗 Get Link", url=target_url))
+        # Add a line with the Get Link button (inline keyboard) and a clickable text link for contact
+        keyboard = telebot.types.InlineKeyboardMarkup(row_width=1)
+        get_link_btn = telebot.types.InlineKeyboardButton("🔗 Get Link", url=target_url)
+        keyboard.add(get_link_btn)
+        
+        # Append a clickable text link for contacting admin (not a button)
+        caption += f"\n\n[📞 Contact Admin](https://t.me/server530Bot?start=contact)"
         
         bot.send_message(LINK_GROUP_ID, caption, reply_markup=keyboard, parse_mode='Markdown')
         logger.info(f"Posted link {link_num} to channel {LINK_GROUP_ID}")
