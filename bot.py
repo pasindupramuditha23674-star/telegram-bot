@@ -42,7 +42,7 @@ sent_videos = {}
 detected_channel_id = CHANNEL_ID
 link_database = {}
 
-# ---------- MongoDB / JSON setup (unchanged) ----------
+# ---------- MongoDB / JSON setup ----------
 def connect_to_mongodb():
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
@@ -70,8 +70,7 @@ def connect_to_mongodb():
             'sent_videos': sent_videos_collection,
             'links': links_collection
         }
-    except Exception as e:
-        logger.error(f"MongoDB connection error: {e}")
+    except Exception:
         return None
 
 mongo_client = connect_to_mongodb()
@@ -93,8 +92,7 @@ def load_database():
                 video_database = json.load(f)
         else:
             video_database = {}
-    except Exception as e:
-        logger.error(f"load_database error: {e}")
+    except Exception:
         video_database = {}
 
 def save_database():
@@ -111,8 +109,8 @@ def save_database():
                 )
         with open('video_database.json', 'w') as f:
             json.dump(video_database, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"save_database error: {e}")
+    except Exception:
+        pass
 
 # ----- Link database -----
 def load_links():
@@ -131,8 +129,7 @@ def load_links():
                 link_database = json.load(f)
         else:
             link_database = {}
-    except Exception as e:
-        logger.error(f"load_links error: {e}")
+    except Exception:
         link_database = {}
 
 def save_links():
@@ -149,10 +146,10 @@ def save_links():
                 )
         with open('link_database.json', 'w') as f:
             json.dump(link_database, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"save_links error: {e}")
+    except Exception:
+        pass
 
-# ----- Sent videos (unchanged) -----
+# ----- Sent videos -----
 def load_sent_videos():
     global sent_videos
     try:
@@ -171,8 +168,7 @@ def load_sent_videos():
                 sent_videos = json.load(f)
         else:
             sent_videos = {}
-    except Exception as e:
-        logger.error(f"load_sent_videos error: {e}")
+    except Exception:
         sent_videos = {}
 
 def save_sent_videos():
@@ -189,8 +185,8 @@ def save_sent_videos():
                 mongo_client['sent_videos'].insert_many(documents)
         with open('sent_videos.json', 'w') as f:
             json.dump(sent_videos, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"save_sent_videos error: {e}")
+    except Exception:
+        pass
 
 def add_sent_video(user_id, message_id, video_id, sent_time):
     global sent_videos
@@ -229,8 +225,7 @@ def auto_delete_worker():
             if to_delete:
                 save_sent_videos()
             time.sleep(60)
-        except Exception as e:
-            logger.error(f"auto_delete_worker error: {e}")
+        except Exception:
             time.sleep(60)
 
 threading.Thread(target=auto_delete_worker, daemon=True).start()
@@ -265,8 +260,7 @@ def detect_channel_id():
             detected_channel_id = chat.id
             return detected_channel_id
         return None
-    except Exception as e:
-        logger.error(f"detect_channel_id error: {e}")
+    except Exception:
         return None
 
 def get_channel_info():
@@ -340,16 +334,6 @@ def test_channel_post(message):
         bot.reply_to(message, "Sent")
     except Exception as e:
         bot.reply_to(message, f"Error: {e}")
-
-# Test command to check link channel permissions
-@bot.message_handler(commands=['testlinkchannel'])
-def test_link_channel(message):
-    if message.from_user.id != YOUR_TELEGRAM_ID: return
-    try:
-        bot.send_message(LINK_GROUP_ID, "✅ Test message from bot. If you see this, the bot has permission to post.")
-        bot.reply_to(message, "Test message sent to link channel. Check if it appears.")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Failed to send to link channel: {str(e)}")
 
 @bot.message_handler(commands=['setchannel'])
 def set_channel_command(message):
@@ -457,94 +441,74 @@ def show_video_menu(message):
         keyboard.add(telebot.types.InlineKeyboardButton(f"🎬 {name}", callback_data=f"send_{vid}"))
     bot.reply_to(message, "Select a video:", reply_markup=keyboard)
 
-# ========== START HANDLER (with deep link for contact) ==========
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    text_parts = message.text.split()
-    if len(text_parts) > 1 and text_parts[1] == 'contact':
-        bot.reply_to(message,
-                     "📞 **Contact the Administrator**\n\n"
-                     "Please type your message below. It will be forwarded anonymously to the admin.\n"
-                     "The admin can reply directly to you.\n\n"
-                     "**Note:** Only text messages are supported.",
-                     parse_mode='Markdown')
-        if not hasattr(bot, 'waiting_for_feedback'):
-            bot.waiting_for_feedback = set()
-        bot.waiting_for_feedback.add(message.chat.id)
+    parts = message.text.split()
+    if len(parts) > 1 and parts[1] in video_database:
+        send_video_to_user(message, parts[1])
     else:
         show_video_menu(message)
 
-# ========== ANONYMOUS FORWARDING ==========
-if not hasattr(bot, 'waiting_for_feedback'):
-    bot.waiting_for_feedback = set()
+def send_video_to_user(message, video_id):
+    try:
+        video_data = video_database[video_id]
+        sent = bot.send_video(message.chat.id, video_data['file_id'], protect_content=True)
+        add_sent_video(message.chat.id, sent.message_id, video_id, datetime.now().isoformat())
+    except Exception as e:
+        bot.reply_to(message, "Failed to send video.")
 
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def forward_to_admin(message):
-    if message.chat.id in bot.waiting_for_feedback:
-        bot.waiting_for_feedback.discard(message.chat.id)
-        user = message.from_user
-        user_mention = f"[{user.first_name}](tg://user?id={user.id})"
-        forward_text = (
-            f"📨 **New Message from {user_mention}**\n\n"
-            f"**Message:** {message.text}\n\n"
-            f"_Click on the user's name to reply directly._"
-        )
-        try:
-            bot.send_message(YOUR_TELEGRAM_ID, forward_text, parse_mode='Markdown')
-            bot.reply_to(message, "✅ Your message has been sent to the admin.")
-        except Exception as e:
-            logger.error(f"Failed to forward message: {e}")
-            bot.reply_to(message, "❌ Error sending message. Please try again.")
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    if call.data.startswith('send_'):
+        video_id = call.data.replace('send_', '')
+        if video_id in video_database:
+            try:
+                sent = bot.send_video(call.from_user.id, video_database[video_id]['file_id'], protect_content=True)
+                add_sent_video(call.from_user.id, sent.message_id, video_id, datetime.now().isoformat())
+                bot.answer_callback_query(call.id, "✅ Video sent!")
+            except Exception:
+                bot.answer_callback_query(call.id, "❌ Failed")
+    elif call.data == "list_names" and call.from_user.id == YOUR_TELEGRAM_ID:
+        list_thumbnail_names_command(call.message)
+        bot.answer_callback_query(call.id)
 
-# ========== LINK MANAGEMENT COMMANDS ==========
+# ========== NEW LINK MANAGEMENT COMMANDS ==========
 @bot.message_handler(commands=['addlink'])
 def add_link_command(message):
-    logger.info(f"DEBUG: /addlink received from user {message.from_user.id}")
-    try:
-        if message.from_user.id != YOUR_TELEGRAM_ID:
-            bot.reply_to(message, "⛔ You are not authorized.")
-            return
-        
-        parts = message.text.split(maxsplit=3)
-        if len(parts) < 4:
-            bot.reply_to(message, "Usage: /addlink [number] [url] [display_name]\nExample: /addlink 1 https://t.me/telegram 'News'")
-            return
-        
-        link_num = parts[1]
-        url = parts[2]
-        name = parts[3]
-        link_id = f"link{link_num}"
-        if not url.startswith(('http://','https://')):
-            url = 'https://' + url
-        
-        link_database[link_id] = {
-            "url": url,
-            "name": name,
-            "added_date": datetime.now().isoformat()
-        }
-        save_links()
-        logger.info(f"Link {link_num} saved. Attempting to post to channel...")
-        post_result = post_link_to_group(link_num)
-        if post_result:
-            bot.reply_to(message, f"✅ Link {link_num} saved and posted to channel.\nName: {name}\nURL: {url}")
-        else:
-            bot.reply_to(message, f"⚠️ Link {link_num} saved but FAILED to post to channel. Check bot permissions and channel ID.")
-    except Exception as e:
-        logger.error(f"Error in /addlink: {e}")
-        bot.reply_to(message, f"❌ Error: {str(e)[:200]}")
+    if message.from_user.id != YOUR_TELEGRAM_ID: return
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 4:
+        bot.reply_to(message, "Usage: /addlink [number] [url] [display_name]\nExample: /addlink 1 https://t.me/telegram 'News'")
+        return
+    link_num = parts[1]
+    url = parts[2]
+    name = parts[3]
+    link_id = f"link{link_num}"
+    if not url.startswith(('http://','https://')):
+        url = 'https://' + url
+    link_database[link_id] = {
+        "url": url,
+        "name": name,
+        "added_date": datetime.now().isoformat()
+    }
+    save_links()
+    post_link_to_group(link_num)
+    bot.reply_to(message, f"✅ Link {link_num} saved and posted to channel.\nName: {name}\nURL: {url}")
 
 @bot.message_handler(commands=['setlinkdesc'])
 def set_link_description(message):
+    """Set a custom description for a link post.
+    Usage: /setlinkdesc 1 This is my channel description"""
     if message.from_user.id != YOUR_TELEGRAM_ID: return
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        bot.reply_to(message, "Usage: /setlinkdesc [link_number] [description]")
+        bot.reply_to(message, "Usage: /setlinkdesc [link_number] [description]\nExample: /setlinkdesc 1 This channel posts daily news.")
         return
     link_num = parts[1]
     description = parts[2]
     link_id = f"link{link_num}"
     if link_id not in link_database:
-        bot.reply_to(message, f"❌ Link {link_num} not found.")
+        bot.reply_to(message, f"❌ Link {link_num} not found. Use /addlink first.")
         return
     link_database[link_id]['description'] = description
     save_links()
@@ -588,7 +552,7 @@ def post_link_manually(message):
     if post_link_to_group(parts[1]):
         bot.reply_to(message, f"✅ Link {parts[1]} reposted.")
     else:
-        bot.reply_to(message, "❌ Failed. Check logs.")
+        bot.reply_to(message, "❌ Failed.")
 
 @bot.message_handler(commands=['getlink'])
 def get_link_direct_command(message):
@@ -606,37 +570,31 @@ def get_link_direct_command(message):
 
 def post_link_to_group(link_num):
     try:
-        logger.info(f"post_link_to_group called for link number {link_num}")
         if LINK_GROUP_ID is None:
-            logger.error("LINK_GROUP_ID is None")
+            logger.error("LINK_GROUP_ID not set")
             return False
         link_id = f"link{link_num}"
         if link_id not in link_database:
-            logger.error(f"Link {link_id} not found in database")
             return False
         data = link_database[link_id]
         target_url = f"{WEBSITE_BASE_URL}/?link={link_num}"
         
+        # Build the message: bold channel name, optional description, then button
         channel_name = data['name']
         description = data.get('description', '')
+        
         caption = f"✨ **{channel_name}**"
         if description:
             caption += f"\n{description}"
         
-        keyboard = telebot.types.InlineKeyboardMarkup(row_width=1)
-        get_link_btn = telebot.types.InlineKeyboardButton("🔗 Get Link", url=target_url)
-        keyboard.add(get_link_btn)
+        keyboard = telebot.types.InlineKeyboardMarkup()
+        keyboard.add(telebot.types.InlineKeyboardButton("🔗 Get Link", url=target_url))
         
-        caption += f"\n\n[📞 Contact Admin](https://t.me/server530Bot?start=contact)"
-        
-        logger.info(f"Sending message to LINK_GROUP_ID={LINK_GROUP_ID}")
         bot.send_message(LINK_GROUP_ID, caption, reply_markup=keyboard, parse_mode='Markdown')
-        logger.info(f"Successfully posted link {link_num} to channel")
+        logger.info(f"Posted link {link_num} to channel {LINK_GROUP_ID}")
         return True
     except Exception as e:
         logger.error(f"Failed to post link: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
         return False
 
 # ========== API endpoint for website ==========
