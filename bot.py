@@ -6,7 +6,7 @@ import time
 import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
-from flask_cors import CORS  # <-- ADDED for CORS support
+from flask_cors import CORS
 import telebot
 
 try:
@@ -22,7 +22,7 @@ BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
 ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
 YOUR_TELEGRAM_ID = 1574602076
 
-# ===== VIDEO CHANNEL (original) =====
+# ===== VIDEO CHANNEL =====
 CHANNEL_INVITE_LINK = "https://t.me/+NEW_LINK_HERE"
 CHANNEL_ID = -1003030466566
 
@@ -32,7 +32,7 @@ LINK_GROUP_ID = -1003302471500
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
 
 app = Flask(__name__)
-CORS(app)  # <-- ENABLES CORS FOR ALL ROUTES
+CORS(app)
 bot = telebot.TeleBot(BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
@@ -495,6 +495,25 @@ def add_link_command(message):
     post_link_to_group(link_num)
     bot.reply_to(message, f"✅ Link {link_num} saved and posted to channel.\nName: {name}\nURL: {url}")
 
+@bot.message_handler(commands=['setlinkdesc'])
+def set_link_description(message):
+    """Set a custom description for a link post.
+    Usage: /setlinkdesc 1 This is my channel description"""
+    if message.from_user.id != YOUR_TELEGRAM_ID: return
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        bot.reply_to(message, "Usage: /setlinkdesc [link_number] [description]\nExample: /setlinkdesc 1 This channel posts daily news.")
+        return
+    link_num = parts[1]
+    description = parts[2]
+    link_id = f"link{link_num}"
+    if link_id not in link_database:
+        bot.reply_to(message, f"❌ Link {link_num} not found. Use /addlink first.")
+        return
+    link_database[link_id]['description'] = description
+    save_links()
+    bot.reply_to(message, f"✅ Description set for Link {link_num}:\n\n{description}")
+
 @bot.message_handler(commands=['listlinks'])
 def list_links_command(message):
     if message.from_user.id != YOUR_TELEGRAM_ID: return
@@ -503,7 +522,10 @@ def list_links_command(message):
         return
     text = "📌 Saved links:\n"
     for lid, data in link_database.items():
-        text += f"• {lid}: {data['name']}\n  → {data['url']}\n\n"
+        text += f"• {lid}: {data['name']}\n  → {data['url']}\n"
+        if 'description' in data:
+            text += f"  📝 {data['description'][:50]}...\n"
+        text += "\n"
     bot.reply_to(message, text[:4000], parse_mode='Markdown')
 
 @bot.message_handler(commands=['deletelink'])
@@ -556,9 +578,18 @@ def post_link_to_group(link_num):
             return False
         data = link_database[link_id]
         target_url = f"{WEBSITE_BASE_URL}/?link={link_num}"
+        
+        # Build the message: bold channel name, optional description, then button
+        channel_name = data['name']
+        description = data.get('description', '')
+        
+        caption = f"✨ **{channel_name}**"
+        if description:
+            caption += f"\n{description}"
+        
         keyboard = telebot.types.InlineKeyboardMarkup()
-        keyboard.add(telebot.types.InlineKeyboardButton(f"🔗 {data['name']}", url=target_url))
-        caption = f"✨ **{data['name']}**\n\nClick the button – link will appear letter by letter in 7 seconds."
+        keyboard.add(telebot.types.InlineKeyboardButton("🔗 Get Link", url=target_url))
+        
         bot.send_message(LINK_GROUP_ID, caption, reply_markup=keyboard, parse_mode='Markdown')
         logger.info(f"Posted link {link_num} to channel {LINK_GROUP_ID}")
         return True
