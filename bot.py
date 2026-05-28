@@ -472,6 +472,46 @@ def handle_callback(call):
         list_thumbnail_names_command(call.message)
         bot.answer_callback_query(call.id)
 
+# ========== ANONYMOUS CONTACT ADMIN (SECOND METHOD) ==========
+# Create a set to track users who are in "ask mode"
+# We'll attach it as an attribute to the bot object for persistence across handlers
+if not hasattr(bot, 'waiting_for_feedback'):
+    bot.waiting_for_feedback = set()
+
+@bot.message_handler(commands=['help', 'contact', 'ask'])
+def ask_admin_command(message):
+    """Initiates the anonymous contact process."""
+    bot.reply_to(message, 
+                 "✏️ **Contact Admin**\n\n"
+                 "Please type your message below. It will be forwarded anonymously to the administrator.\n"
+                 "The admin will see your name and can reply to you directly.\n\n"
+                 "**Note:** Only text messages are supported.", 
+                 parse_mode='Markdown')
+    # Add user to waiting set
+    bot.waiting_for_feedback.add(message.chat.id)
+
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def forward_to_admin(message):
+    """Forward any text message from a user in waiting_for_feedback to the admin."""
+    if message.chat.id in bot.waiting_for_feedback:
+        # Remove user from set so future messages are not forwarded
+        bot.waiting_for_feedback.discard(message.chat.id)
+        
+        # Prepare the forwarded message for admin
+        user = message.from_user
+        user_mention = f"[{user.first_name}](tg://user?id={user.id})"
+        forward_text = (
+            f"📨 **New Message from {user_mention}**\n\n"
+            f"**Message:** {message.text}\n\n"
+            f"_Click on the user's name to reply directly._"
+        )
+        try:
+            bot.send_message(YOUR_TELEGRAM_ID, forward_text, parse_mode='Markdown')
+            bot.reply_to(message, "✅ Your message has been sent to the admin. They will get back to you soon.")
+        except Exception as e:
+            logger.error(f"Failed to forward message: {e}")
+            bot.reply_to(message, "❌ Sorry, there was an error sending your message. Please try again later.")
+
 # ========== NEW LINK MANAGEMENT COMMANDS ==========
 @bot.message_handler(commands=['addlink'])
 def add_link_command(message):
@@ -497,8 +537,6 @@ def add_link_command(message):
 
 @bot.message_handler(commands=['setlinkdesc'])
 def set_link_description(message):
-    """Set a custom description for a link post.
-    Usage: /setlinkdesc 1 This is my channel description"""
     if message.from_user.id != YOUR_TELEGRAM_ID: return
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
