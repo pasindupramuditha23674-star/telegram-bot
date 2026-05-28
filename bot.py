@@ -6,6 +6,7 @@ import time
 import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # <-- ADDED for CORS support
 import telebot
 
 try:
@@ -25,12 +26,13 @@ YOUR_TELEGRAM_ID = 1574602076
 CHANNEL_INVITE_LINK = "https://t.me/+NEW_LINK_HERE"
 CHANNEL_ID = -1003030466566
 
-# ===== LINK CHANNEL (updated) =====
-LINK_GROUP_ID = -1003302471500   # <--- Your new channel ID
+# ===== LINK CHANNEL =====
+LINK_GROUP_ID = -1003302471500
 
 WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
 
 app = Flask(__name__)
+CORS(app)  # <-- ENABLES CORS FOR ALL ROUTES
 bot = telebot.TeleBot(BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
