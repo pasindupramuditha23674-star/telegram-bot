@@ -490,25 +490,37 @@ def forward_to_admin(message):
 # ========== NEW LINK MANAGEMENT COMMANDS ==========
 @bot.message_handler(commands=['addlink'])
 def add_link_command(message):
-    if message.from_user.id != YOUR_TELEGRAM_ID: return
-    parts = message.text.split(maxsplit=3)
-    if len(parts) < 4:
-        bot.reply_to(message, "Usage: /addlink [number] [url] [display_name]\nExample: /addlink 1 https://t.me/telegram 'News'")
-        return
-    link_num = parts[1]
-    url = parts[2]
-    name = parts[3]
-    link_id = f"link{link_num}"
-    if not url.startswith(('http://','https://')):
-        url = 'https://' + url
-    link_database[link_id] = {
-        "url": url,
-        "name": name,
-        "added_date": datetime.now().isoformat()
-    }
-    save_links()
-    post_link_to_group(link_num)
-    bot.reply_to(message, f"✅ Link {link_num} saved and posted to channel.\nName: {name}\nURL: {url}")
+    # Debug log
+    logger.info(f"DEBUG: /addlink received from user {message.from_user.id}")
+    try:
+        if message.from_user.id != YOUR_TELEGRAM_ID:
+            logger.warning(f"DEBUG: Unauthorized user {message.from_user.id}")
+            bot.reply_to(message, "⛔ You are not authorized to use this command.")
+            return
+        
+        parts = message.text.split(maxsplit=3)
+        if len(parts) < 4:
+            bot.reply_to(message, "Usage: /addlink [number] [url] [display_name]\nExample: /addlink 1 https://t.me/telegram 'News'")
+            return
+        
+        link_num = parts[1]
+        url = parts[2]
+        name = parts[3]
+        link_id = f"link{link_num}"
+        if not url.startswith(('http://','https://')):
+            url = 'https://' + url
+        
+        link_database[link_id] = {
+            "url": url,
+            "name": name,
+            "added_date": datetime.now().isoformat()
+        }
+        save_links()
+        post_link_to_group(link_num)
+        bot.reply_to(message, f"✅ Link {link_num} saved and posted to channel.\nName: {name}\nURL: {url}")
+    except Exception as e:
+        logger.error(f"Error in /addlink: {e}")
+        bot.reply_to(message, f"❌ An error occurred: {str(e)[:200]}")
 
 @bot.message_handler(commands=['setlinkdesc'])
 def set_link_description(message):
@@ -581,7 +593,6 @@ def get_link_direct_command(message):
     name = link_database[link_id]['name']
     bot.reply_to(message, f"🔗 **{name}**\n\n{url}", parse_mode='Markdown', disable_web_page_preview=False)
 
-# ========== UPDATED post_link_to_group (with clickable text link for contact) ==========
 def post_link_to_group(link_num):
     try:
         if LINK_GROUP_ID is None:
