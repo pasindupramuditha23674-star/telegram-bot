@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 import time
+import requests  # <-- added for self-ping
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 import telebot
@@ -230,6 +231,21 @@ threading.Thread(target=auto_delete_worker, daemon=True).start()
 load_database()
 load_links()
 load_sent_videos()
+
+# ========== KEEP ALIVE FUNCTION (self-ping) ==========
+def keep_alive():
+    """Ping the bot's own URL every 10 minutes to prevent Render from sleeping."""
+    url = "https://telegram-bot-7-dqqa.onrender.com/"
+    while True:
+        time.sleep(600)  # 10 minutes
+        try:
+            response = requests.get(url, timeout=10)
+            logger.info(f"Self-ping keep-alive: status {response.status_code}")
+        except Exception as e:
+            logger.error(f"Self-ping failed: {e}")
+
+# Start the keep-alive thread
+threading.Thread(target=keep_alive, daemon=True).start()
 
 # ========== ORIGINAL VIDEO COMMANDS (abridged but fully functional) ==========
 def detect_channel_id():
