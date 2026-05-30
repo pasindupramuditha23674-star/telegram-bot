@@ -42,30 +42,21 @@ sent_videos = {}
 detected_channel_id = CHANNEL_ID
 link_database = {}
 
-# ---------- MongoDB / JSON setup with TLS fix ----------
+# ---------- MongoDB / JSON setup ----------
 def connect_to_mongodb():
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
         if not mongodb_uri or not MONGODB_AVAILABLE:
-            logger.warning("MONGODB_URI not set or pymongo not installed. Using JSON fallback.")
             return None
-        
-        # Force TLS 1.2 to fix SSL handshake issues with Render + Atlas
-        if 'tlsVersion=' not in mongodb_uri:
-            separator = '&' if '?' in mongodb_uri else '?'
-            mongodb_uri += f"{separator}tlsVersion=TLS1_2"
-        
         client = MongoClient(
             mongodb_uri,
             serverSelectionTimeoutMS=15000,
             connectTimeoutMS=15000,
             socketTimeoutMS=15000,
             tls=True,
-            tlsAllowInvalidCertificates=True  # Workaround for Render environment
+            tlsAllowInvalidCertificates=True
         )
-        # Test connection
         client.admin.command('ping')
-        logger.info("✅ MongoDB connected successfully!")
         db = client.video_bot_database
         videos_collection = db.videos
         sent_videos_collection = db.sent_videos
@@ -79,8 +70,7 @@ def connect_to_mongodb():
             'sent_videos': sent_videos_collection,
             'links': links_collection
         }
-    except Exception as e:
-        logger.error(f"MongoDB connection error: {e}")
+    except Exception:
         return None
 
 mongo_client = connect_to_mongodb()
@@ -368,18 +358,6 @@ def bot_status_command(message):
     uptime_str = f"{uptime//3600}h {(uptime%3600)//60}m"
     bot.reply_to(message, f"Videos: {len(video_database)} | Links: {len(link_database)} | Uptime: {uptime_str}")
 
-@bot.message_handler(commands=['dbstatus'])
-def db_status_command(message):
-    if message.from_user.id != YOUR_TELEGRAM_ID: return
-    if mongo_client is not None:
-        try:
-            mongo_client['client'].admin.command('ping')
-            bot.reply_to(message, "✅ MongoDB is connected and working properly.")
-        except Exception as e:
-            bot.reply_to(message, f"❌ MongoDB client exists but ping failed: {e}")
-    else:
-        bot.reply_to(message, "❌ MongoDB is NOT connected. Check that MONGODB_URI environment variable is set and pymongo is installed.")
-
 @bot.message_handler(content_types=['photo'])
 def handle_photo_upload(message):
     if message.from_user.id != YOUR_TELEGRAM_ID: return
@@ -463,46 +441,13 @@ def show_video_menu(message):
         keyboard.add(telebot.types.InlineKeyboardButton(f"🎬 {name}", callback_data=f"send_{vid}"))
     bot.reply_to(message, "Select a video:", reply_markup=keyboard)
 
-# ========== UPDATED START HANDLER (with deep link for contact) ==========
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    text_parts = message.text.split()
-    if len(text_parts) > 1 and text_parts[1] == 'contact':
-        # Contact request from channel link
-        bot.reply_to(message,
-                     "📞 **Contact the Administrator**\n\n"
-                     "Please type your message below. It will be forwarded anonymously to the admin.\n"
-                     "The admin can reply directly to you.\n\n"
-                     "**Note:** Only text messages are supported.",
-                     parse_mode='Markdown')
-        if not hasattr(bot, 'waiting_for_feedback'):
-            bot.waiting_for_feedback = set()
-        bot.waiting_for_feedback.add(message.chat.id)
+    parts = message.text.split()
+    if len(parts) > 1 and parts[1] in video_database:
+        send_video_to_user(message, parts[1])
     else:
-        # Regular start – show video menu
         show_video_menu(message)
-
-# ========== ANONYMOUS FORWARDING ==========
-if not hasattr(bot, 'waiting_for_feedback'):
-    bot.waiting_for_feedback = set()
-
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def forward_to_admin(message):
-    if message.chat.id in bot.waiting_for_feedback:
-        bot.waiting_for_feedback.discard(message.chat.id)
-        user = message.from_user
-        user_mention = f"[{user.first_name}](tg://user?id={user.id})"
-        forward_text = (
-            f"📨 **New Message from {user_mention}**\n\n"
-            f"**Message:** {message.text}\n\n"
-            f"_Click on the user's name to reply directly._"
-        )
-        try:
-            bot.send_message(YOUR_TELEGRAM_ID, forward_text, parse_mode='Markdown')
-            bot.reply_to(message, "✅ Your message has been sent to the admin. They will get back to you soon.")
-        except Exception as e:
-            logger.error(f"Failed to forward: {e}")
-            bot.reply_to(message, "❌ Sorry, there was an error sending your message.")
 
 def send_video_to_user(message, video_id):
     try:
@@ -552,6 +497,8 @@ def add_link_command(message):
 
 @bot.message_handler(commands=['setlinkdesc'])
 def set_link_description(message):
+    """Set a custom description for a link post.
+    Usage: /setlinkdesc 1 This is my channel description"""
     if message.from_user.id != YOUR_TELEGRAM_ID: return
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
@@ -621,7 +568,6 @@ def get_link_direct_command(message):
     name = link_database[link_id]['name']
     bot.reply_to(message, f"🔗 **{name}**\n\n{url}", parse_mode='Markdown', disable_web_page_preview=False)
 
-# ========== MODIFIED post_link_to_group (with clickable Contact Admin text) ==========
 def post_link_to_group(link_num):
     try:
         if LINK_GROUP_ID is None:
@@ -633,7 +579,7 @@ def post_link_to_group(link_num):
         data = link_database[link_id]
         target_url = f"{WEBSITE_BASE_URL}/?link={link_num}"
         
-        # Build the message: bold channel name, optional description
+        # Build the message: bold channel name, optional description, then button
         channel_name = data['name']
         description = data.get('description', '')
         
@@ -641,10 +587,6 @@ def post_link_to_group(link_num):
         if description:
             caption += f"\n{description}"
         
-        # Add clickable "Contact Admin" text link (opens bot chat with /start contact)
-        caption += f"\n\n[📞 Contact Admin](https://t.me/server530Bot?start=contact)"
-        
-        # Add the inline button for Get Link
         keyboard = telebot.types.InlineKeyboardMarkup()
         keyboard.add(telebot.types.InlineKeyboardButton("🔗 Get Link", url=target_url))
         
