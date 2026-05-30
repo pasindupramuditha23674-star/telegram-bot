@@ -42,21 +42,28 @@ sent_videos = {}
 detected_channel_id = CHANNEL_ID
 link_database = {}
 
-# ---------- MongoDB / JSON setup ----------
+# ---------- MongoDB / JSON setup with TLS fix ----------
 def connect_to_mongodb():
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
         if not mongodb_uri or not MONGODB_AVAILABLE:
             logger.warning("MONGODB_URI not set or pymongo not installed. Using JSON fallback.")
             return None
+        
+        # Force TLS 1.2 to fix SSL handshake issues with Render + Atlas
+        if 'tlsVersion=' not in mongodb_uri:
+            separator = '&' if '?' in mongodb_uri else '?'
+            mongodb_uri += f"{separator}tlsVersion=TLS1_2"
+        
         client = MongoClient(
             mongodb_uri,
             serverSelectionTimeoutMS=15000,
             connectTimeoutMS=15000,
             socketTimeoutMS=15000,
             tls=True,
-            tlsAllowInvalidCertificates=True
+            tlsAllowInvalidCertificates=True  # Workaround for Render environment
         )
+        # Test connection
         client.admin.command('ping')
         logger.info("✅ MongoDB connected successfully!")
         db = client.video_bot_database
