@@ -18,23 +18,24 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "7768542371:AAHT1JbnsABZ7_zbaBQeOuCB0ayr577PDEE"
-ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
-YOUR_TELEGRAM_ID = 1574602076
+# ===== LOAD FROM ENVIRONMENT VARIABLES =====
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+ADMIN_BOT_TOKEN = os.environ.get('ADMIN_BOT_TOKEN')
+YOUR_TELEGRAM_ID = int(os.environ.get('YOUR_TELEGRAM_ID', '0'))
+CHANNEL_ID = int(os.environ.get('CHANNEL_ID', '-1003030466566'))
+LINK_GROUP_ID = int(os.environ.get('LINK_GROUP_ID', '-1003302471500'))
+WEBSITE_BASE_URL = os.environ.get('WEBSITE_BASE_URL', 'https://spontaneous-halva-72f63a.netlify.app')
+RENDER_EXTERNAL_URL = os.environ.get('RENDER_EXTERNAL_URL', 'https://telegram-bot-10-h1oj.onrender.com')
 
-# ===== VIDEO CHANNEL =====
-CHANNEL_INVITE_LINK = "https://t.me/+NEW_LINK_HERE"
-CHANNEL_ID = -1003030466566
-
-# ===== LINK CHANNEL =====
-LINK_GROUP_ID = -1003302471500
-
-WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable not set!")
+if YOUR_TELEGRAM_ID == 0:
+    raise ValueError("YOUR_TELEGRAM_ID environment variable not set!")
 
 app = Flask(__name__)
 CORS(app)
 bot = telebot.TeleBot(BOT_TOKEN)
-admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
+admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN) if ADMIN_BOT_TOKEN else None
 
 app_start_time = time.time()
 video_database = {}
@@ -42,7 +43,7 @@ sent_videos = {}
 detected_channel_id = CHANNEL_ID
 link_database = {}
 
-# ---------- MongoDB / JSON setup ----------
+# ---------- MongoDB / JSON setup (unchanged) ----------
 def connect_to_mongodb():
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
@@ -75,7 +76,6 @@ def connect_to_mongodb():
 
 mongo_client = connect_to_mongodb()
 
-# ----- Video database -----
 def load_database():
     global video_database
     try:
@@ -112,7 +112,6 @@ def save_database():
     except Exception:
         pass
 
-# ----- Link database -----
 def load_links():
     global link_database
     try:
@@ -149,7 +148,6 @@ def save_links():
     except Exception:
         pass
 
-# ----- Sent videos -----
 def load_sent_videos():
     global sent_videos
     try:
@@ -234,9 +232,8 @@ load_database()
 load_links()
 load_sent_videos()
 
-# ========== KEEP ALIVE FUNCTION ==========
 def keep_alive():
-    url = "https://telegram-bot-7-dqqa.onrender.com/"
+    url = RENDER_EXTERNAL_URL
     while True:
         time.sleep(600)
         try:
@@ -247,16 +244,12 @@ def keep_alive():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# ========== ORIGINAL VIDEO COMMANDS ==========
+# ---------- BOT COMMAND HANDLERS ----------
 def detect_channel_id():
     global detected_channel_id
     try:
         if CHANNEL_ID:
             chat = bot.get_chat(CHANNEL_ID)
-            detected_channel_id = chat.id
-            return detected_channel_id
-        if CHANNEL_INVITE_LINK:
-            chat = bot.get_chat(CHANNEL_INVITE_LINK)
             detected_channel_id = chat.id
             return detected_channel_id
         return None
@@ -441,13 +434,22 @@ def show_video_menu(message):
         keyboard.add(telebot.types.InlineKeyboardButton(f"🎬 {name}", callback_data=f"send_{vid}"))
     bot.reply_to(message, "Select a video:", reply_markup=keyboard)
 
+# ===== MODIFIED: /start handler with error handling =====
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    parts = message.text.split()
-    if len(parts) > 1 and parts[1] in video_database:
-        send_video_to_user(message, parts[1])
-    else:
-        show_video_menu(message)
+    try:
+        logger.info(f"Start command received from {message.from_user.id}")
+        parts = message.text.split()
+        if len(parts) > 1 and parts[1] in video_database:
+            send_video_to_user(message, parts[1])
+        else:
+            show_video_menu(message)
+    except Exception as e:
+        logger.error(f"Error in start handler: {e}")
+        try:
+            bot.reply_to(message, f"❌ Error: {str(e)[:100]}")
+        except Exception as reply_error:
+            logger.error(f"Could not send error reply: {reply_error}")
 
 def send_video_to_user(message, video_id):
     try:
@@ -456,6 +458,15 @@ def send_video_to_user(message, video_id):
         add_sent_video(message.chat.id, sent.message_id, video_id, datetime.now().isoformat())
     except Exception as e:
         bot.reply_to(message, "Failed to send video.")
+
+# ===== NEW: Echo handler for debugging =====
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    logger.info(f"Echo handler triggered: {message.text}")
+    try:
+        bot.reply_to(message, f"Echo: {message.text}")
+    except Exception as e:
+        logger.error(f"Echo reply failed: {e}")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
@@ -472,7 +483,7 @@ def handle_callback(call):
         list_thumbnail_names_command(call.message)
         bot.answer_callback_query(call.id)
 
-# ========== NEW LINK MANAGEMENT COMMANDS ==========
+# ========== LINK MANAGEMENT COMMANDS (unchanged) ==========
 @bot.message_handler(commands=['addlink'])
 def add_link_command(message):
     if message.from_user.id != YOUR_TELEGRAM_ID: return
@@ -497,8 +508,6 @@ def add_link_command(message):
 
 @bot.message_handler(commands=['setlinkdesc'])
 def set_link_description(message):
-    """Set a custom description for a link post.
-    Usage: /setlinkdesc 1 This is my channel description"""
     if message.from_user.id != YOUR_TELEGRAM_ID: return
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
@@ -578,18 +587,13 @@ def post_link_to_group(link_num):
             return False
         data = link_database[link_id]
         target_url = f"{WEBSITE_BASE_URL}/?link={link_num}"
-        
-        # Build the message: bold channel name, optional description, then button
         channel_name = data['name']
         description = data.get('description', '')
-        
         caption = f"✨ **{channel_name}**"
         if description:
             caption += f"\n{description}"
-        
         keyboard = telebot.types.InlineKeyboardMarkup()
         keyboard.add(telebot.types.InlineKeyboardButton("🔗 Get Link", url=target_url))
-        
         bot.send_message(LINK_GROUP_ID, caption, reply_markup=keyboard, parse_mode='Markdown')
         logger.info(f"Posted link {link_num} to channel {LINK_GROUP_ID}")
         return True
@@ -597,21 +601,34 @@ def post_link_to_group(link_num):
         logger.error(f"Failed to post link: {e}")
         return False
 
-# ========== API endpoint for website ==========
+# ========== API endpoint ==========
 @app.route('/api/links')
 def get_links_api():
     return jsonify(link_database)
 
-# ========== FLASK WEBHOOKS ==========
+# ========== MODIFIED: Webhook route with logging ==========
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    json_str = request.get_data().decode('UTF-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return 'OK'
+    try:
+        json_str = request.get_data().decode('UTF-8')
+        logger.info(f"Webhook received data (first 200 chars): {json_str[:200]}")
+        update = telebot.types.Update.de_json(json_str)
+        if update.message:
+            logger.info(f"Update type: message, text: {update.message.text}")
+        elif update.callback_query:
+            logger.info("Update type: callback_query")
+        else:
+            logger.info("Update type: other")
+        bot.process_new_updates([update])
+        return 'OK'
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/admin_webhook', methods=['POST'])
 def admin_webhook():
+    if not admin_bot:
+        return jsonify({"error": "Admin bot not configured"}), 503
     json_str = request.get_data().decode('UTF-8')
     update = telebot.types.Update.de_json(json_str)
     admin_bot.process_new_updates([update])
@@ -619,14 +636,16 @@ def admin_webhook():
 
 @app.route('/set_webhook', methods=['GET'])
 def set_webhook():
-    webhook_url = "https://telegram-bot-7-dqqa.onrender.com/webhook"
+    webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
     bot.remove_webhook()
     success = bot.set_webhook(url=webhook_url)
     return jsonify({"success": bool(success), "url": webhook_url})
 
 @app.route('/set_admin_webhook', methods=['GET'])
 def set_admin_webhook():
-    webhook_url = "https://telegram-bot-7-dqqa.onrender.com/admin_webhook"
+    if not admin_bot:
+        return jsonify({"error": "Admin bot not configured"}), 503
+    webhook_url = f"{RENDER_EXTERNAL_URL}/admin_webhook"
     admin_bot.remove_webhook()
     success = admin_bot.set_webhook(url=webhook_url)
     return jsonify({"success": bool(success), "url": webhook_url})
