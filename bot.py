@@ -43,7 +43,7 @@ sent_videos = {}
 detected_channel_id = CHANNEL_ID
 link_database = {}
 
-# ---------- MongoDB / JSON setup (unchanged) ----------
+# ---------- MongoDB / JSON setup ----------
 def connect_to_mongodb():
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
@@ -434,7 +434,6 @@ def show_video_menu(message):
         keyboard.add(telebot.types.InlineKeyboardButton(f"🎬 {name}", callback_data=f"send_{vid}"))
     bot.reply_to(message, "Select a video:", reply_markup=keyboard)
 
-# ===== MODIFIED: /start handler with error handling =====
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     try:
@@ -448,8 +447,8 @@ def handle_start(message):
         logger.error(f"Error in start handler: {e}")
         try:
             bot.reply_to(message, f"❌ Error: {str(e)[:100]}")
-        except Exception as reply_error:
-            logger.error(f"Could not send error reply: {reply_error}")
+        except Exception:
+            pass
 
 def send_video_to_user(message, video_id):
     try:
@@ -459,7 +458,6 @@ def send_video_to_user(message, video_id):
     except Exception as e:
         bot.reply_to(message, "Failed to send video.")
 
-# ===== NEW: Echo handler for debugging =====
 @bot.message_handler(func=lambda message: True)
 def echo_all(message):
     logger.info(f"Echo handler triggered: {message.text}")
@@ -483,7 +481,7 @@ def handle_callback(call):
         list_thumbnail_names_command(call.message)
         bot.answer_callback_query(call.id)
 
-# ========== LINK MANAGEMENT COMMANDS (unchanged) ==========
+# ========== LINK MANAGEMENT COMMANDS ==========
 @bot.message_handler(commands=['addlink'])
 def add_link_command(message):
     if message.from_user.id != YOUR_TELEGRAM_ID: return
@@ -606,7 +604,7 @@ def post_link_to_group(link_num):
 def get_links_api():
     return jsonify(link_database)
 
-# ========== MODIFIED: Webhook route with logging ==========
+# ========== MODIFIED WEBHOOK ROUTE WITH DIRECT REPLY ==========
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -615,10 +613,17 @@ def webhook():
         update = telebot.types.Update.de_json(json_str)
         if update.message:
             logger.info(f"Update type: message, text: {update.message.text}")
+            # Direct reply – bypasses handlers to test sending capability
+            try:
+                bot.send_message(update.message.chat.id, "✅ I received your message!")
+                logger.info("Sent direct reply")
+            except Exception as e:
+                logger.error(f"Failed to send direct reply: {e}")
         elif update.callback_query:
             logger.info("Update type: callback_query")
         else:
             logger.info("Update type: other")
+        # Still process the update normally
         bot.process_new_updates([update])
         return 'OK'
     except Exception as e:
