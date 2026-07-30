@@ -18,11 +18,11 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ===== SECURE: LOAD ALL SENSITIVE VALUES FROM ENVIRONMENT VARIABLES =====
+# ===== LOAD ALL SENSITIVE VALUES FROM ENVIRONMENT VARIABLES =====
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 ADMIN_BOT_TOKEN = os.environ.get('ADMIN_BOT_TOKEN')
 YOUR_TELEGRAM_ID = int(os.environ.get('YOUR_TELEGRAM_ID', '0'))
-WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', 'default-secret-change-me')
+WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', 'change-this-secret')
 WEBSITE_BASE_URL = os.environ.get('WEBSITE_BASE_URL', 'https://spontaneous-halva-72f63a.netlify.app')
 CHANNEL_ID = int(os.environ.get('CHANNEL_ID', '-1003030466566'))
 LINK_GROUP_ID = int(os.environ.get('LINK_GROUP_ID', '-1003302471500'))
@@ -33,7 +33,7 @@ if not BOT_TOKEN:
 if YOUR_TELEGRAM_ID == 0:
     raise ValueError("YOUR_TELEGRAM_ID environment variable not set!")
 
-# ===== INITIALIZE BOT =====
+# ===== INITIALISE BOT =====
 app = Flask(__name__)
 CORS(app)
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -45,7 +45,7 @@ sent_videos = {}
 detected_channel_id = CHANNEL_ID
 link_database = {}
 
-# ---------- MongoDB / JSON setup ----------
+# ---------- MongoDB / JSON setup (unchanged) ----------
 def connect_to_mongodb():
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
@@ -78,7 +78,6 @@ def connect_to_mongodb():
 
 mongo_client = connect_to_mongodb()
 
-# ----- Video database -----
 def load_database():
     global video_database
     try:
@@ -115,7 +114,6 @@ def save_database():
     except Exception:
         pass
 
-# ----- Link database -----
 def load_links():
     global link_database
     try:
@@ -152,7 +150,6 @@ def save_links():
     except Exception:
         pass
 
-# ----- Sent videos -----
 def load_sent_videos():
     global sent_videos
     try:
@@ -239,7 +236,7 @@ load_sent_videos()
 
 # ========== KEEP ALIVE FUNCTION ==========
 def keep_alive():
-    url = "https://telegram-bot-7-dqqa.onrender.com/"
+    url = os.environ.get('RENDER_EXTERNAL_URL', 'https://telegram-bot-7-dqqa.onrender.com/')
     while True:
         time.sleep(600)
         try:
@@ -250,16 +247,12 @@ def keep_alive():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# ========== ORIGINAL VIDEO COMMANDS ==========
+# ---------- All your original bot commands (unchanged) ----------
 def detect_channel_id():
     global detected_channel_id
     try:
         if CHANNEL_ID:
             chat = bot.get_chat(CHANNEL_ID)
-            detected_channel_id = chat.id
-            return detected_channel_id
-        if CHANNEL_INVITE_LINK:
-            chat = bot.get_chat(CHANNEL_INVITE_LINK)
             detected_channel_id = chat.id
             return detected_channel_id
         return None
@@ -475,7 +468,7 @@ def handle_callback(call):
         list_thumbnail_names_command(call.message)
         bot.answer_callback_query(call.id)
 
-# ========== NEW LINK MANAGEMENT COMMANDS ==========
+# ========== LINK MANAGEMENT COMMANDS ==========
 @bot.message_handler(commands=['addlink'])
 def add_link_command(message):
     if message.from_user.id != YOUR_TELEGRAM_ID: return
@@ -598,7 +591,7 @@ def post_link_to_group(link_num):
 def get_links_api():
     return jsonify(link_database)
 
-# ========== WEBHOOK SECURITY DECORATOR ==========
+# ========== WEBHOOK SECURITY ==========
 def verify_webhook_secret(f):
     def decorated(*args, **kwargs):
         secret = request.headers.get('X-Telegram-Bot-Api-Secret')
@@ -609,7 +602,6 @@ def verify_webhook_secret(f):
     decorated.__name__ = f.__name__
     return decorated
 
-# ========== FLASK WEBHOOKS (with secret verification) ==========
 @app.route('/webhook', methods=['POST'])
 @verify_webhook_secret
 def webhook():
@@ -661,7 +653,6 @@ def setup_webhooks():
     secret = request.args.get('secret')
     if secret != WEBHOOK_SECRET:
         return jsonify({"error": "Unauthorized"}), 403
-    # Set both webhooks
     set_webhook()
     set_admin_webhook()
     return jsonify({
