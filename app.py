@@ -18,23 +18,26 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "7768542371:AAFVJ9PDPSnS63Cm9jWsGtOt4EMwYZJajAA"
-ADMIN_BOT_TOKEN = "8224351252:AAGwZel-8rfURnT5zE8dQD9eEUYOBW1vUxU"
-YOUR_TELEGRAM_ID = 1574602076
+# ===== SECURE: LOAD ALL SENSITIVE VALUES FROM ENVIRONMENT VARIABLES =====
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+ADMIN_BOT_TOKEN = os.environ.get('ADMIN_BOT_TOKEN')
+YOUR_TELEGRAM_ID = int(os.environ.get('YOUR_TELEGRAM_ID', '0'))
+WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', 'default-secret-change-me')
+WEBSITE_BASE_URL = os.environ.get('WEBSITE_BASE_URL', 'https://spontaneous-halva-72f63a.netlify.app')
+CHANNEL_ID = int(os.environ.get('CHANNEL_ID', '-1003030466566'))
+LINK_GROUP_ID = int(os.environ.get('LINK_GROUP_ID', '-1003302471500'))
 
-# ===== VIDEO CHANNEL =====
-CHANNEL_INVITE_LINK = "https://t.me/+NEW_LINK_HERE"
-CHANNEL_ID = -1003030466566
+# Validate required variables
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable not set!")
+if YOUR_TELEGRAM_ID == 0:
+    raise ValueError("YOUR_TELEGRAM_ID environment variable not set!")
 
-# ===== LINK CHANNEL =====
-LINK_GROUP_ID = -1003302471500
-
-WEBSITE_BASE_URL = "https://spontaneous-halva-72f63a.netlify.app"
-
+# ===== INITIALIZE BOT =====
 app = Flask(__name__)
 CORS(app)
 bot = telebot.TeleBot(BOT_TOKEN)
-admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
+admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN) if ADMIN_BOT_TOKEN else None
 
 app_start_time = time.time()
 video_database = {}
@@ -497,8 +500,6 @@ def add_link_command(message):
 
 @bot.message_handler(commands=['setlinkdesc'])
 def set_link_description(message):
-    """Set a custom description for a link post.
-    Usage: /setlinkdesc 1 This is my channel description"""
     if message.from_user.id != YOUR_TELEGRAM_ID: return
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
@@ -578,18 +579,13 @@ def post_link_to_group(link_num):
             return False
         data = link_database[link_id]
         target_url = f"{WEBSITE_BASE_URL}/?link={link_num}"
-        
-        # Build the message: bold channel name, optional description, then button
         channel_name = data['name']
         description = data.get('description', '')
-        
         caption = f"✨ **{channel_name}**"
         if description:
             caption += f"\n{description}"
-        
         keyboard = telebot.types.InlineKeyboardMarkup()
         keyboard.add(telebot.types.InlineKeyboardButton("🔗 Get Link", url=target_url))
-        
         bot.send_message(LINK_GROUP_ID, caption, reply_markup=keyboard, parse_mode='Markdown')
         logger.info(f"Posted link {link_num} to channel {LINK_GROUP_ID}")
         return True
@@ -602,8 +598,20 @@ def post_link_to_group(link_num):
 def get_links_api():
     return jsonify(link_database)
 
-# ========== FLASK WEBHOOKS ==========
+# ========== WEBHOOK SECURITY DECORATOR ==========
+def verify_webhook_secret(f):
+    def decorated(*args, **kwargs):
+        secret = request.headers.get('X-Telegram-Bot-Api-Secret')
+        if secret != WEBHOOK_SECRET:
+            logger.warning(f"Unauthorized webhook call from {request.remote_addr}")
+            return jsonify({"error": "Unauthorized"}), 403
+        return f(*args, **kwargs)
+    decorated.__name__ = f.__name__
+    return decorated
+
+# ========== FLASK WEBHOOKS (with secret verification) ==========
 @app.route('/webhook', methods=['POST'])
+@verify_webhook_secret
 def webhook():
     json_str = request.get_data().decode('UTF-8')
     update = telebot.types.Update.de_json(json_str)
@@ -611,7 +619,10 @@ def webhook():
     return 'OK'
 
 @app.route('/admin_webhook', methods=['POST'])
+@verify_webhook_secret
 def admin_webhook():
+    if not admin_bot:
+        return jsonify({"error": "Admin bot not configured"}), 503
     json_str = request.get_data().decode('UTF-8')
     update = telebot.types.Update.de_json(json_str)
     admin_bot.process_new_updates([update])
@@ -619,23 +630,45 @@ def admin_webhook():
 
 @app.route('/set_webhook', methods=['GET'])
 def set_webhook():
-    webhook_url = "https://telegram-bot-7-dqqa.onrender.com/webhook"
+    secret = request.args.get('secret')
+    if secret != WEBHOOK_SECRET:
+        return jsonify({"error": "Unauthorized"}), 403
+    webhook_url = f"{request.host_url.rstrip('/')}/webhook"
     bot.remove_webhook()
-    success = bot.set_webhook(url=webhook_url)
+    success = bot.set_webhook(
+        url=webhook_url,
+        secret_token=WEBHOOK_SECRET
+    )
     return jsonify({"success": bool(success), "url": webhook_url})
 
 @app.route('/set_admin_webhook', methods=['GET'])
 def set_admin_webhook():
-    webhook_url = "https://telegram-bot-7-dqqa.onrender.com/admin_webhook"
+    secret = request.args.get('secret')
+    if secret != WEBHOOK_SECRET:
+        return jsonify({"error": "Unauthorized"}), 403
+    if not admin_bot:
+        return jsonify({"error": "Admin bot not configured"}), 503
+    webhook_url = f"{request.host_url.rstrip('/')}/admin_webhook"
     admin_bot.remove_webhook()
-    success = admin_bot.set_webhook(url=webhook_url)
+    success = admin_bot.set_webhook(
+        url=webhook_url,
+        secret_token=WEBHOOK_SECRET
+    )
     return jsonify({"success": bool(success), "url": webhook_url})
 
 @app.route('/setup', methods=['GET'])
 def setup_webhooks():
+    secret = request.args.get('secret')
+    if secret != WEBHOOK_SECRET:
+        return jsonify({"error": "Unauthorized"}), 403
+    # Set both webhooks
     set_webhook()
     set_admin_webhook()
-    return jsonify({"message": "Webhooks configured", "videos": len(video_database), "links": len(link_database)})
+    return jsonify({
+        "message": "Webhooks configured with secret token",
+        "videos": len(video_database),
+        "links": len(link_database)
+    })
 
 @app.route('/')
 def home():
