@@ -43,7 +43,7 @@ sent_videos = {}
 detected_channel_id = CHANNEL_ID
 link_database = {}
 
-# ---------- MongoDB / JSON setup (unchanged) ----------
+# ---------- MongoDB / JSON setup ----------
 def connect_to_mongodb():
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
@@ -244,7 +244,7 @@ def keep_alive():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# ---------- BOT COMMAND HANDLERS (unchanged) ----------
+# ---------- BOT COMMAND HANDLERS ----------
 def detect_channel_id():
     global detected_channel_id
     try:
@@ -604,7 +604,7 @@ def post_link_to_group(link_num):
 def get_links_api():
     return jsonify(link_database)
 
-# ========== MODIFIED WEBHOOK WITH MANUAL ROUTING ==========
+# ========== FIXED WEBHOOK (no duplicate processing) ==========
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -650,11 +650,8 @@ def webhook():
             elif text.startswith('/getlink'):
                 get_link_direct_command(update.message)
             else:
-                # If no command matches, use echo handler
-                echo_all(update.message)
-
-            # Also process the update normally for callback queries, etc.
-            bot.process_new_updates([update])
+                # Unknown command – send a helpful reply
+                bot.reply_to(update.message, "❌ Unknown command. Use /start to see available options.")
 
         elif update.callback_query:
             logger.info("Update type: callback_query")
@@ -668,7 +665,7 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ---------- Other routes (unchanged) ----------
+# ---------- Other routes ----------
 @app.route('/admin_webhook', methods=['POST'])
 def admin_webhook():
     if not admin_bot:
