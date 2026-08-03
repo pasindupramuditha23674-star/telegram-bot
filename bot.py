@@ -43,7 +43,7 @@ sent_videos = {}
 detected_channel_id = CHANNEL_ID
 link_database = {}
 
-# ---------- MongoDB / JSON setup ----------
+# ---------- MongoDB / JSON setup (unchanged) ----------
 def connect_to_mongodb():
     try:
         mongodb_uri = os.getenv('MONGODB_URI')
@@ -244,7 +244,7 @@ def keep_alive():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# ---------- BOT COMMAND HANDLERS ----------
+# ---------- BOT COMMAND HANDLERS (unchanged) ----------
 def detect_channel_id():
     global detected_channel_id
     try:
@@ -604,7 +604,7 @@ def post_link_to_group(link_num):
 def get_links_api():
     return jsonify(link_database)
 
-# ========== FIXED WEBHOOK (no duplicate processing) ==========
+# ========== FIXED WEBHOOK WITH VIDEO/MEDIA HANDLING ==========
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -614,44 +614,58 @@ def webhook():
         
         if update.message:
             logger.info(f"Update type: message, text: {update.message.text}")
-            text = update.message.text
+            msg = update.message
 
-            # --- Manual command routing ---
-            if text.startswith('/start'):
-                handle_start(update.message)
-            elif text.startswith('/status'):
-                bot_status_command(update.message)
-            elif text.startswith('/thumbname'):
-                set_thumbnail_name_command(update.message)
-            elif text.startswith('/listthumbnames'):
-                list_thumbnail_names_command(update.message)
-            elif text.startswith('/removethumbname'):
-                remove_thumbnail_name_command(update.message)
-            elif text.startswith('/findchannel'):
-                find_channel_command(update.message)
-            elif text.startswith('/testchannel'):
-                test_channel_post(update.message)
-            elif text.startswith('/setchannel'):
-                set_channel_command(update.message)
-            elif text.startswith('/caption'):
-                set_caption_command(update.message)
-            elif text.startswith('/savevideo'):
-                save_video_command(update.message)
-            elif text.startswith('/addlink'):
-                add_link_command(update.message)
-            elif text.startswith('/setlinkdesc'):
-                set_link_description(update.message)
-            elif text.startswith('/listlinks'):
-                list_links_command(update.message)
-            elif text.startswith('/deletelink'):
-                delete_link_command(update.message)
-            elif text.startswith('/postlink'):
-                post_link_manually(update.message)
-            elif text.startswith('/getlink'):
-                get_link_direct_command(update.message)
+            # --- Handle commands (text starting with '/') ---
+            if msg.text and msg.text.startswith('/'):
+                text = msg.text
+                if text.startswith('/start'):
+                    handle_start(msg)
+                elif text.startswith('/status'):
+                    bot_status_command(msg)
+                elif text.startswith('/thumbname'):
+                    set_thumbnail_name_command(msg)
+                elif text.startswith('/listthumbnames'):
+                    list_thumbnail_names_command(msg)
+                elif text.startswith('/removethumbname'):
+                    remove_thumbnail_name_command(msg)
+                elif text.startswith('/findchannel'):
+                    find_channel_command(msg)
+                elif text.startswith('/testchannel'):
+                    test_channel_post(msg)
+                elif text.startswith('/setchannel'):
+                    set_channel_command(msg)
+                elif text.startswith('/caption'):
+                    set_caption_command(msg)
+                elif text.startswith('/savevideo'):
+                    save_video_command(msg)
+                elif text.startswith('/addlink'):
+                    add_link_command(msg)
+                elif text.startswith('/setlinkdesc'):
+                    set_link_description(msg)
+                elif text.startswith('/listlinks'):
+                    list_links_command(msg)
+                elif text.startswith('/deletelink'):
+                    delete_link_command(msg)
+                elif text.startswith('/postlink'):
+                    post_link_manually(msg)
+                elif text.startswith('/getlink'):
+                    get_link_direct_command(msg)
+                else:
+                    bot.reply_to(msg, "❌ Unknown command. Use /start to see available options.")
             else:
-                # Unknown command – send a helpful reply
-                bot.reply_to(update.message, "❌ Unknown command. Use /start to see available options.")
+                # --- Non‑command messages: handle media ---
+                if msg.video:
+                    handle_video_upload(msg)
+                elif msg.photo:
+                    if msg.caption and msg.caption.startswith('/thumb'):
+                        handle_photo_upload(msg)
+                    else:
+                        bot.reply_to(msg, "📸 Photo received. Use /thumb [num] in caption to set a thumbnail.")
+                elif msg.document:
+                    bot.reply_to(msg, "📄 Document received. I only accept videos and photos.")
+                else:
+                    bot.reply_to(msg, "🤖 I can only process videos and commands at the moment.")
 
         elif update.callback_query:
             logger.info("Update type: callback_query")
@@ -665,7 +679,7 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ---------- Other routes ----------
+# ---------- Other routes (unchanged) ----------
 @app.route('/admin_webhook', methods=['POST'])
 def admin_webhook():
     if not admin_bot:
